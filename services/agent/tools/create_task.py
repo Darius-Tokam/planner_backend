@@ -95,7 +95,9 @@ def execute(user: User, **kwargs) -> ToolResult:
         existing_qs = existing_qs.filter(deadline=deadline)
     else:
         existing_qs = existing_qs.filter(deadline__isnull=True)
-    existing = existing_qs.first()
+    # v3 has an atomic receipt per operation. A new deliberate request may
+    # legitimately create another task with the same title and deadline.
+    existing = None if kwargs.get('_operation_id') else existing_qs.first()
     if existing is not None:
         # N'attache le lieu à la tâche existante que s'il n'en a pas encore un.
         if place is not None and existing.place_id is None:
