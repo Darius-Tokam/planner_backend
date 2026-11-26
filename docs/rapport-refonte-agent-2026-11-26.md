@@ -56,6 +56,8 @@ Les suites Django et pytest se recouvrent; leurs nombres ne s’additionnent pas
 
 La première tentative navigateur contrôlée utilisait un compte ayant déjà un examen au même horaire. L’outil a refusé le conflit. Les essais finaux utilisent des comptes synthétiques distincts pour ne pas confondre des fixtures accumulées avec une panne de transport.
 
+La première CI PostgreSQL a révélé une dépendance transitive non bornée : une installation neuve sélectionnait MCP 2.3.0, qui a retiré `GetSessionIdCallback` utilisé par PydanticAI 1.30.1. Le poste testait MCP 1.30.0. Cette version est maintenant explicitement épinglée dans `requirements.txt`; le contrôle d’import et les suites CI sont rejoués sur une installation neuve.
+
 ## Revue indépendante et corrections
 
 Une revue indépendante a examiné la branche complète. Ses problèmes critiques et importants ont été traités dans une seule passe, avec reproductions négatives puis tests verts :

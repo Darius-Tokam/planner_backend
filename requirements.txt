@@ -30,6 +30,9 @@ openai>=1.51,<2.0  # DeepSeek provider (OpenAI-compatible API, base_url https://
 # suivante interdit. pip redescend alors version par version (~70 aller-
 # retours) et le build Railway s'eternise. Vecu le 2026-08-27.
 pydantic-ai-slim[openai,dbos,mcp]==1.30.1
+# DBOSAgent 1.30.1 importe GetSessionIdCallback, retire de MCP 2.x.
+# Version effectivement validee avec DBOS 3.7.0, aussi sur installation CI neuve.
+mcp==1.30.0
 opentelemetry-api<1.38
 huggingface-hub>=0.20,<1.0
 PyMuPDF>=1.24,<2.0
