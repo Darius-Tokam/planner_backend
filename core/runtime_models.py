@@ -92,7 +92,7 @@ class AgentModelAttempt(models.Model):
     status = models.CharField(max_length=24, default='started')
     usage = models.JSONField(default=dict)
     response = models.JSONField(default=list)
-    reservation_id = models.BigIntegerField(null=True)
+    reservation_id = models.UUIDField(null=True)
     elapsed_ms = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     finished_at = models.DateTimeField(null=True)
