@@ -15,7 +15,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         if connection.vendor != 'postgresql':
             raise CommandError('Le worker v3 exige PostgreSQL.')
-        from dbos import DBOS, Queue, SetWorkflowID
+        from dbos import DBOS, SetWorkflowID
         from core.models import AgentInvocation
         from services.agent_runtime.workflow import configure_agent, run_invocation
         from services.agent_runtime.admission import expire_waiting
@@ -26,9 +26,9 @@ class Command(BaseCommand):
                      'application_version': os.getenv('PLANNER_RUNTIME_VERSION', 'v3-1'),
                      'executor_id': os.getenv('PLANNER_WORKER_ID', 'planner-v3-worker'),
                      'enable_otlp': False})
-        queue = Queue('planner-v3', concurrency=4, worker_concurrency=4)
         configure_agent()
         DBOS.launch()
+        queue = DBOS.register_queue('planner-v3', global_concurrency=4, worker_concurrency=4)
         self.stdout.write('Worker Planner v3 démarré.')
         try:
             while True:

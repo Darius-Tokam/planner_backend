@@ -7,7 +7,7 @@ from asgiref.sync import sync_to_async
 from dbos import DBOS
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.exceptions import CallDeferred
-from pydantic_ai.messages import PartStartEvent, PartDeltaEvent, TextPart, TextPartDelta
+from pydantic_ai.messages import PartStartEvent, PartDeltaEvent, TextPart, TextPartDelta, ToolCallPart, ToolReturnPart
 from pydantic_ai.tools import Tool
 
 from core.models import AgentOperation
@@ -110,6 +110,12 @@ def build_agent(model, *, durable=False):
 
         def make_tool(tool_name):
             async def invoke(ctx, **arguments):
+                # Tool-call order is not authorization. A clarification in this
+                # response postpones every mutation, including calls before it.
+                if tool_name in policy.MUTATIONS or tool_name == 'send_notification':
+                    if ctx.messages and any(isinstance(part, ToolCallPart) and part.tool_name == 'ask_question_custom'
+                                            for part in ctx.messages[-1].parts):
+                        return failure('clarification_pending', 'Attends la réponse à la question avant toute modification. Rappelle ensuite les outils nécessaires.')
                 fn = durable_tool if ctx.deps.durable else execute_call
                 result = await sync_to_async(fn)(ctx.deps.run_id, ctx.tool_call_id, tool_name, arguments)
                 if result.get('status') == 'waiting':
@@ -118,12 +124,42 @@ def build_agent(model, *, durable=False):
             return invoke
 
         async def prepare(ctx, definition):
-            return definition if definition.name in ctx.deps.enabled else None
+            # Rebuild discovery from the persisted protocol too: a DBOS replay
+            # may return a cached load_tools result without executing its body.
+            enabled = set(ctx.deps.enabled)
+            for message in ctx.messages:
+                for part in message.parts:
+                    if isinstance(part, ToolReturnPart) and part.tool_name == 'load_tools' and isinstance(part.content, dict):
+                        enabled.update(part.content.get('available_next_request', []))
+            return definition if definition.name in enabled else None
 
         description = module.DESCRIPTION
+        for legacy_question in policy.EXCLUDED:
+            description = description.replace(legacy_question, 'ask_question_custom')
+        if name == 'delete_task':
+            description = ('Prépare la suppression définitive d’une tâche identifiée par list_tasks, avec ses créneaux. '
+                           'Appelle cet outil directement pour afficher la confirmation sécurisée; '
+                           'le serveur attend la décision humaine avant toute suppression. Pour cocher, utilise complete_task.')
+        elif name == 'clear_all_blocks':
+            description = ('Prépare l’archivage de tous les blocs récurrents si demandé explicitement. '
+                           'Appelle cet outil pour afficher la confirmation; le serveur attend la décision avant d’archiver.')
+        elif name == 'create_block':
+            description = ('Crée des créneaux hebdomadaires uniquement quand la répétition est demandée. '
+                           'Un jour ou une date unique utilise schedule_task_at. Nécessite titre, jours, début et fin. '
+                           'Ne déduis jamais la répétition du type d’activité. Une fin avant le début traverse minuit. '
+                           'Les conflits sont retournés par l’outil.')
+        elif name == 'schedule_task_at':
+            description = ('Réserve un événement unique : titre, date, heure de début et de fin. '
+                           'Le nom générique donné par l’utilisateur suffit comme titre. '
+                           'Une fin avant le début traverse minuit. Une nouvelle invocation avec le même titre '
+                           'et la même date met à jour ce créneau. Les autres champs sont facultatifs. '
+                           'Si une heure imposée manque, demande uniquement cette heure avec ask_question_custom.')
         if name == 'ask_question_custom':
-            description = ('Demande une précision nécessaire avant une action. text: libre; choice: 2 à 4 choix '
-                           'exhaustifs; form: champs multiples ou radio avec allow_other. Une réponse '
+            description = ('Suspend l’action pour obtenir UNIQUEMENT les données obligatoires qui manquent encore. '
+                           'Reprends toutes les valeurs déjà connues, même un titre générique. '
+                           'Aucune question facultative, proposition supplémentaire ou reconfirmation d’une valeur explicite. '
+                           'text: libre; choice: 2 à 4 choix exhaustifs; form: seulement les champs indispensables manquants, '
+                           'ou radio avec allow_other. Une réponse '
                            'reprend exactement cet appel. Les confirmations sont créées par l’outil métier.')
         tool = Tool.from_schema(make_tool(name), name, description, schema_for(name), takes_ctx=True,
                                 sequential=name in policy.MUTATIONS or name == 'send_notification')

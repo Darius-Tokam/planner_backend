@@ -78,25 +78,32 @@ def validate_form_answer(question, value):
             if kind in ('radio', 'select', 'checkbox'):
                 choices = {o['value'] for o in field['options']}
                 if isinstance(item, dict):
-                    assert field.get('allow_other') and set(item) == {'other'}
-                    assert isinstance(item['other'], str) and 0 < len(item['other'].strip()) <= 1000
+                    if not (field.get('allow_other') and set(item) == {'other'}):
+                        raise ValueError()
+                    if not (isinstance(item['other'], str) and 0 < len(item['other'].strip()) <= 1000):
+                        raise ValueError()
                 elif kind == 'checkbox':
-                    assert isinstance(item, list) and len(item) == len(set(item)) and set(item) <= choices
+                    if not (isinstance(item, list) and len(item) == len(set(item)) and set(item) <= choices):
+                        raise ValueError()
                 else:
-                    assert isinstance(item, str) and item in choices
+                    if not (isinstance(item, str) and item in choices):
+                        raise ValueError()
             elif kind == 'time_range':
-                assert isinstance(item, dict) and set(item) == {'start', 'end'}
+                if not (isinstance(item, dict) and set(item) == {'start', 'end'}):
+                    raise ValueError()
                 time.fromisoformat(item['start'])
                 time.fromisoformat(item['end'])
             elif kind == 'number':
-                assert type(item) in (int, float) and abs(item) < 1e12
+                if not (type(item) in (int, float) and abs(item) < 1e12):
+                    raise ValueError()
             else:
-                assert isinstance(item, str) and 0 < len(item.strip()) <= 4000
+                if not (isinstance(item, str) and 0 < len(item.strip()) <= 4000):
+                    raise ValueError()
                 if kind == 'time':
                     time.fromisoformat(item)
                 elif kind == 'date':
                     date.fromisoformat(item)
                 elif kind == 'datetime':
                     datetime.fromisoformat(item)
-        except (ValueError, TypeError, AssertionError, KeyError):
+        except (ValueError, TypeError, KeyError):
             raise InvalidAnswer(f"Vérifie le champ {field['label']}.") from None

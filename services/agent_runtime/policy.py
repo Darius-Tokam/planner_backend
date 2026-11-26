@@ -16,7 +16,7 @@ TARGETS = {'task_id': Task, 'block_id': RecurringBlock, 'goal_id': Goal,
 
 def confirmation_required(name, args):
     return (getattr(TOOL_MAP[name], 'REQUIRES_CONFIRMATION', False)
-            or name in {'cancel_scheduled_block', 'skip_block_occurrence'}
+            or name in {'delete_block', 'cancel_scheduled_block', 'skip_block_occurrence'}
             or name == 'manage_reminder' and args.get('action') == 'cancel'
             or name == 'manage_recurrence' and args.get('action') in {'cancel', 'update', 'stop'}
             or name in {'organize_day', 'optimize_week'} and args.get('apply') is True)

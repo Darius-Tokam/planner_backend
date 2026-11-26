@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -13,7 +13,7 @@ from services.agent_runtime.store import emit
 
 
 @override_settings(PLANNER_RUNTIME_DEFAULT='v3')
-class RuntimeAPITests(TestCase):
+class RuntimeAPITests(TransactionTestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user('api-runtime')
         self.other = get_user_model().objects.create_user('api-other')
@@ -44,6 +44,16 @@ class RuntimeAPITests(TestCase):
         assistants = [m for m in response.data['messages'] if m['role'] == 'assistant']
         self.assertEqual(len(assistants), 1)
         self.assertEqual(assistants[0]['metadata']['run_id'], run_id)
+
+    def test_interrupted_effects_remain_visible_to_the_next_request(self):
+        from services.agent_runtime.tools import execute_call
+        run = AgentRun.objects.get(pk=self.post(message='Crée Lire').data['run_id'])
+        receipt = execute_call(run.pk, 'created', 'create_task', {'title': 'Lire'})
+        AgentRun.objects.filter(pk=run.pk).update(status='interrupted')
+        next_run = AgentRun.objects.get(pk=self.post(message='As-tu terminé ?').data['run_id'])
+        facts = next_run.context['interrupted_results']
+        self.assertEqual(facts[0]['operation_id'], receipt['operation_id'])
+        self.assertEqual(facts[0]['receipt']['statut'], 'confirme')
 
     def test_legacy_routes_cannot_execute_a_v3_conversation(self):
         for path in ('/api/chat/', '/api/chat/stream/'):

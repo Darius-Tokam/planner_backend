@@ -22,14 +22,28 @@ logger = logging.getLogger(__name__)
 _agent = None
 
 
+def interruption_error(run_id, exc):
+    cause = getattr(exc, 'motif', None) or type(exc).__name__
+    error = {'code': cause, 'message': 'Le traitement s’est interrompu. Les résultats vérifiés restent disponibles.'}
+    if cause in ('quota_mesure', 'garde_cout'):
+        from services.agent_v2.budget_tour import statut_usage
+        from core.anonyme import est_anonyme
+        user = AgentRun.objects.select_related('user').get(pk=run_id).user
+        error.update(message=('Ton quota quotidien de jetons mesurés est atteint.' if cause == 'quota_mesure'
+                     else 'La protection de coût a suspendu les appels. Certaines mesures sont indisponibles.'),
+                     reprise_a=statut_usage(user)['reprise_a'], signup_suggested=est_anonyme(user))
+    return error
+
+
 def configure_agent(model=None):
     """Register the fixed workflow/step names before DBOS.launch, once per process."""
     global _agent
     if _agent is not None:
         return _agent
     if model is None:
+        from django.conf import settings
         from services.agent_v2.modeles import _deepseek
-        model = _deepseek()
+        model = _deepseek(settings.PLANNER_RUNTIME_MODEL)
         if model is None:
             raise RuntimeError('DEEPSEEK_API_KEY is required for the v3 worker.')
     _agent = build_agent(AccountedModel(model), durable=True)
@@ -72,7 +86,7 @@ def finish(invocation_id, messages, status, text='', error=None, pending_calls=N
             result['error'] = error
         run.result = result
         run.save(update_fields=['status', 'messages', 'result', 'updated_at'])
-        metadata = {'engine_version': 'v3', 'run_id': str(run.pk), 'status': status}
+        metadata = {'engine_version': 'v3', 'run_id': str(run.pk), 'conversation_id': run.conversation_id, 'status': status}
         # One assistant message per run; resumption updates the same message.
         message = ConversationMessage.objects.filter(conversation=run.conversation,
             role='assistant', metadata__run_id=str(run.pk)).first()
@@ -120,7 +134,7 @@ async def run_invocation(invocation_id):
         except Exception as exc:
             # Log only the exception class, never a provider URL/message/token.
             logger.warning('v3 invocation interrupted type=%s', type(exc).__name__)
-            cause = getattr(exc, 'motif', None) or type(exc).__name__
+            error = await sync_to_async(interruption_error)(run_id, exc)
             return await sync_to_async(finish)(invocation_id,
                 json.loads(ModelMessagesTypeAdapter.dump_json(captured or history)), 'interrupted',
-                error={'code': cause, 'message': 'Le traitement s’est interrompu. Les résultats vérifiés restent disponibles.'})
+                error=error)

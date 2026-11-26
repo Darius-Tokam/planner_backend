@@ -17,6 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # keep their engine, including pending human interactions during a rollback.
 PLANNER_RUNTIME_DEFAULT = os.getenv('PLANNER_RUNTIME_DEFAULT', 'v2')
 PLANNER_V3_USER_IDS = os.getenv('PLANNER_V3_USER_IDS', '')
+PLANNER_RUNTIME_MODEL = os.getenv('PLANNER_RUNTIME_MODEL', 'deepseek-flash')
 
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 

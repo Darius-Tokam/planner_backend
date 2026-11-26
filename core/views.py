@@ -1871,8 +1871,6 @@ class ConversationMessagesView(APIView):
                 .order_by('created_at')[:200])
         return Response({
             'conversation': {'id': conv.pk, 'titre': conv.titre, 'engine_version': conv.engine_version},
-            'active_run_id': str(active.pk) if (active := conv.agent_runs.filter(
-                status__in=['queued', 'running', 'waiting']).order_by('-created_at').first()) else None,
             'messages': [{
                 'id': m.pk,
                 'role': m.role,

@@ -47,6 +47,24 @@ class RuntimeToolsTests(TestCase):
         self.assertTrue(Task.objects.filter(pk=self.task.pk).exists())
         self.assertNotIn('confirm', schema_for('delete_task')['properties'])
 
+    def test_deleting_a_recurring_block_requires_confirmation(self):
+        from core.models import RecurringBlock
+        block = RecurringBlock.objects.create(user=self.user, title='Sport', day_of_week=0,
+            start_time='18:00', end_time='19:00', block_type='sport')
+        result = execute_call(self.run.pk, 'delete-block', 'delete_block', {'block_id': block.pk})
+        self.assertEqual(result['status'], 'waiting')
+        block.refresh_from_db()
+        self.assertTrue(block.active)
+
+    def test_form_validation_is_active_under_python_optimization(self):
+        import inspect
+        from services.agent_runtime import questions
+        namespace = dict(vars(questions))
+        exec(compile(inspect.getsource(questions.validate_form_answer), '<optimized-validator>', 'exec', optimize=2), namespace)
+        with self.assertRaises(store.InvalidAnswer):
+            namespace['validate_form_answer']({'fields': [{'id': 'x', 'type': 'radio',
+                'label': 'Choix', 'options': [{'value': 'a'}, {'value': 'b'}]}]}, {'fields': {'x': 'forged'}})
+
     def test_approval_applies_only_same_target_and_receipt(self):
         execute_call(self.run.pk, 'd1', 'delete_task', {'task_id': self.task.pk})
         question = AgentInteraction.objects.get(run=self.run)
@@ -88,6 +106,21 @@ class RuntimeToolsTests(TestCase):
         self.assertEqual(result['cause'], 'invalid_arguments')
         self.assertIn('priority', str(result['data']))
 
+    def test_task_read_by_id_is_scoped_and_pagination_is_explicit(self):
+        own = execute_call(self.run.pk, 'own-read', 'list_tasks', {'task_id': self.task.pk})
+        self.assertTrue(own['success'])
+        self.assertEqual(own['data']['tasks'][0]['id'], self.task.pk)
+        foreign = Task.objects.create(user=self.other, title='Private')
+        hidden = execute_call(self.run.pk, 'foreign-read', 'list_tasks', {'task_id': foreign.pk})
+        self.assertEqual(hidden['cause'], 'target_not_found')
+        self.assertNotIn('Private', str(hidden))
+        Task.objects.create(user=self.user, title='Second')
+        first = execute_call(self.run.pk, 'page-one', 'list_tasks', {'limit': 1})['data']
+        self.assertTrue(first['truncated'])
+        second = execute_call(self.run.pk, 'page-two', 'list_tasks', {'limit': 1, 'offset': first['next_offset']})['data']
+        self.assertFalse(second['truncated'])
+        self.assertNotEqual(first['tasks'][0]['id'], second['tasks'][0]['id'])
+
     def test_question_form_keeps_other_and_validates_fields(self):
         result = execute_call(self.run.pk, 'q1', 'ask_question_custom', {
             'kind': 'form', 'question': 'Quel horaire ?', 'fields': [
@@ -101,6 +134,24 @@ class RuntimeToolsTests(TestCase):
         value = {'fields': {'hours': '15:00 - 17:00', 'place': {'other': 'Bibliothèque'}}}
         store.answer(self.user, question.pk, value)
         self.assertEqual(resume_interaction(question.pk)['data']['answer'], value)
+
+    def test_free_answer_to_clarification_never_becomes_authorization(self):
+        execute_call(self.run.pk, 'free', 'ask_question_custom', {
+            'kind': 'form', 'question': 'Quand ?', 'fields': [{'id': 'date', 'type': 'date', 'label': 'Date'}]})
+        question = AgentInteraction.objects.get(run=self.run, tool_call_id='free')
+        store.answer(self.user, question.pk, {'text': 'La date est déjà indiquée; de 15:00 à 17:00.'})
+        self.assertIn('15:00', resume_interaction(question.pk)['data']['answer']['text'])
+        execute_call(self.run.pk, 'delete-free', 'delete_task', {'task_id': self.task.pk})
+        confirmation = AgentInteraction.objects.get(run=self.run, tool_call_id='delete-free')
+        with self.assertRaises(store.InvalidAnswer):
+            store.answer(self.user, confirmation.pk, {'text': 'oui'})
+
+    @patch('services.notification_delivery.has_device', return_value=False)
+    def test_activation_is_only_proposed_for_an_actual_alert(self, _):
+        untimed = execute_call(self.run.pk, 'untimed', 'create_task', {'title': 'Read'})
+        self.assertFalse(untimed.get('notification_activation_required', False))
+        timed = execute_call(self.run.pk, 'timed', 'create_task', {'title': 'Call', 'deadline': '2030-01-01T17:00:00-05:00'})
+        self.assertTrue(timed['notification_activation_required'])
 
     @patch('services.notification_delivery.has_device', return_value=False)
     def test_missing_push_subscription_returns_activation_signal(self, _):

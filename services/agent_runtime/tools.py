@@ -146,7 +146,18 @@ def perform(run, call_id, name, args, *, approved=False, targets=None):
                 payload['issue'] = 'effet_a_verifier'
                 payload['cause'] = 'receipt_unverified'
                 payload['message'] += '\nLa relecture ne confirme pas cet effet. Relis la cible avant toute autre écriture.'
-        if name in ('manage_reminder', 'manage_recurrence', 'create_task', 'update_task'):
+        needs_alert = False
+        if result.success:
+            data = payload.get('data') or {}
+            if name in ('create_task', 'update_task'):
+                needs_alert = bool(data.get('task', {}).get('alert_at'))
+            elif name == 'manage_reminder':
+                needs_alert = data.get('reminder', {}).get('status') == 'pending'
+            elif name == 'manage_recurrence' and data.get('series', {}).get('active'):
+                from core.models import RecurrenceSeries
+                series = RecurrenceSeries.objects.filter(user=run.user, pk=data['series']['id']).first()
+                needs_alert = bool(series and (series.kind == 'reminder' or series.due_time or series.alert_time))
+        if needs_alert:
             from services.notification_delivery import has_device
             payload['notification_activation_required'] = not has_device(run.user)
         return payload

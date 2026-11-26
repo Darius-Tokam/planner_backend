@@ -36,6 +36,18 @@ def admit(user, conversation_id, turn_id, message, fingerprint, files=(), docume
         context = {'message_received_at': now.isoformat(), 'date': now.date().isoformat(),
                    'timezone': timezone.get_current_timezone_name(), 'omitted_turns': omitted,
                    'name': user.first_name or user.username}
+        # Do not drop committed effects just because their final prose failed.
+        # The full receipts remain accessible via read_tool_result references.
+        from core.models import AgentOperation
+        from .policy import MUTATIONS
+        interrupted = AgentOperation.objects.filter(run__conversation=conversation,
+            run__status__in=('interrupted', 'cancelled'), tool__in=MUTATIONS).select_related('run')
+        if latest:
+            interrupted = interrupted.filter(run__created_at__gt=latest.created_at)
+        context['interrupted_results'] = [
+            {'operation_id': str(op.pk), 'tool': op.tool,
+             'receipt': op.result.get('receipt'), 'message': str(op.result.get('message', ''))[:400],
+             'request': op.run.prompt[:400]} for op in interrupted.order_by('-created_at')[:8]]
         docs = [UploadedDocument.objects.create(user=user, file=file, file_name=file.name,
                 document_type=document_type) for file in files]
         context['documents'] = [{'id': doc.pk, 'name': doc.file_name} for doc in docs]
@@ -50,7 +62,7 @@ def admit(user, conversation_id, turn_id, message, fingerprint, files=(), docume
                                                 metadata={'engine_version': 'v3', 'run_id': str(run.pk)})
         msg.attachments.set(docs)
         ConversationMessage.objects.create(user=user, conversation=conversation, role='assistant', content='',
-            metadata={'engine_version': 'v3', 'run_id': str(run.pk), 'status': 'queued'})
+            metadata={'engine_version': 'v3', 'run_id': str(run.pk), 'conversation_id': conversation.pk, 'status': 'queued'})
         if conversation.titre == 'Nouvelle conversation':
             conversation.titre = prompt[:80]
         conversation.save(update_fields=['titre', 'updated_at'])

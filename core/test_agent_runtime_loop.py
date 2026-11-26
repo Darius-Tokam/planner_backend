@@ -40,6 +40,26 @@ class LoopTests(TransactionTestCase):
         self.assertEqual(result.output, 'Bonjour !')
         self.assertEqual(AgentEvent.objects.filter(kind='text').last().data['text'], 'Bonjour !')
 
+    def test_question_and_mutation_in_same_response_waits_before_any_write(self):
+        async def stream(messages, info):
+            yield {
+                0: DeltaToolCall(name='create_task', tool_call_id='premature', json_args='{"title":"Unconfirmed interpretation"}'),
+                1: DeltaToolCall(name='ask_question_custom', tool_call_id='clarify', json_args='{"kind":"text","question":"Quelle action veux-tu ?"}'),
+            }
+        result = async_to_sync(build_agent(FunctionModel(stream_function=stream)).run)('Ambigu', deps=self.deps())
+        self.assertIsInstance(result.output, DeferredToolRequests)
+        self.assertFalse(Task.objects.filter(user=self.user).exists())
+
+    def test_budget_interruption_has_precise_reason_and_reset(self):
+        from services.agent_runtime.workflow import interruption_error
+        from services.agent_v2.budget_tour import BudgetEpuise
+        first = interruption_error(self.run.pk, BudgetEpuise('private', 'quota_mesure'))
+        second = interruption_error(self.run.pk, BudgetEpuise('private', 'garde_cout'))
+        self.assertEqual(first['code'], 'quota_mesure')
+        self.assertNotEqual(first['message'], second['message'])
+        self.assertIn('reprise_a', first)
+        self.assertNotIn('private', str(first))
+
     def test_error_returns_to_model_then_corrected_tool_executes(self):
         calls = []
         async def stream(messages, info):
@@ -111,3 +131,21 @@ class LoopTests(TransactionTestCase):
         self.assertEqual(statut_usage(self.user), before)
         self.assertEqual(len(calls), 1)
         self.assertEqual(AgentModelAttempt.objects.count(), 1)
+
+    def test_loaded_tools_survive_human_pause_with_fresh_dependencies(self):
+        calls = []
+        async def stream(messages, info):
+            calls.append(1)
+            if len(calls) == 1:
+                yield {0: DeltaToolCall(name='load_tools', tool_call_id='load', json_args='{"names":["optimize_week"]}')}
+            elif len(calls) == 2:
+                yield {0: DeltaToolCall(name='ask_question_custom', tool_call_id='scope', json_args='{"kind":"text","question":"Quelle semaine ?"}')}
+            else:
+                self.assertIn('optimize_week', [tool.name for tool in info.function_tools])
+                yield 'La semaine indiquée.'
+        agent = build_agent(FunctionModel(stream_function=stream))
+        first = async_to_sync(agent.run)('Optimise', deps=self.deps())
+        question = AgentInteraction.objects.get(run=self.run)
+        store.answer(self.user, question.pk, {'text': 'Cette semaine'})
+        async_to_sync(agent.run)(None, deps=self.deps(), message_history=first.all_messages(),
+            deferred_tool_results=DeferredToolResults(calls={'scope': resume_interaction(question.pk)}))

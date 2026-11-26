@@ -75,7 +75,7 @@ def validate_answer(interaction, value):
     if interaction.kind == 'confirmation':
         if set(value) != {'approved'} or type(value['approved']) is not bool:
             raise InvalidAnswer('Une décision explicite est requise.')
-    elif interaction.kind == 'text':
+    elif interaction.kind == 'text' or set(value) == {'text'}:
         if set(value) != {'text'} or not isinstance(value['text'], str) or not 1 <= len(value['text'].strip()) <= 4000:
             raise InvalidAnswer('Saisis une réponse de 1 à 4 000 caractères.')
     elif interaction.kind == 'choice':
