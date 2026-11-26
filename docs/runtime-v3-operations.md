@@ -28,7 +28,9 @@ Prévoir des sauvegardes de ces deux ensembles et limiter leur accès aux servic
 | `PLANNER_RUNTIME_VERSION` | `v3-1` | Version DBOS compatible avec le code du workflow |
 | `PLANNER_WORKER_ID` | `planner-v3-worker` | Identité de l’exécuteur DBOS |
 
-Commande du service séparé : `python manage.py run_chat_worker`.
+Service Railway séparé : `planner-chat-worker`. Le dispatch de `railway.toml`
+lance `python manage.py run_chat_worker` pour ce nom exact. Il utilise le même
+code que le web, avec des références aux variables nécessaires du backend.
 Commencer avec un seul réplica, concurrence globale de quatre workflows. Ne pas partager
 une identité d’exécuteur entre plusieurs réplicas. Une modification incompatible de l’ordre
 des étapes exige de conserver l’ancien worker pour ses workflows avant de retirer sa version.
