@@ -645,71 +645,56 @@ class PlannerAgentV2:
         - Le stream vide (« Streamed response ended without content or tool
           calls », defaut prod du 2026-09-29) est reessayable.
         """
+        from pydantic_ai import capture_run_messages
         from services.agent_v2 import retry as _retry
+        from services.agent_v2.modeles import fermer_modele
         delai = kwargs.pop('delai', None)
+        kwargs.setdefault('usage', RunUsage())
 
         async def _exec_async():
-            from services.agent_v2.modeles import fermer_modele
+            prochain_message = message
             timeouts = 0
-            derniere = None
-            for tentative in range(1, _retry.TENTATIVES_MAX + 1):
-                try:
-                    return await agent.run(message, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    derniere = exc
-                    vide = 'without content or tool calls' in str(exc)
-                    if not vide and not _retry.est_reessayable(exc):
-                        raise
-                    if _retry.est_timeout(exc):
-                        timeouts += 1
-                        if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
-                            raise
-                    if tentative >= _retry.TENTATIVES_MAX:
-                        raise
-                    attente = _retry.delai_avant_reessai(tentative, exc)
-                    logger.warning("Boucle: echec tentative %d/%d type=%s, reessai dans %.1fs",
-                                   tentative, _retry.TENTATIVES_MAX,
-                                   type(exc).__name__, attente)
-                    await asyncio.sleep(attente)
-                finally:
-                    await fermer_modele(getattr(agent, 'model', None))
-            raise derniere
-
-        def _exec_sync():
-            from services.agent_v2.modeles import fermer_modele
-            timeouts = 0
-            derniere = None
-            for tentative in range(1, _retry.TENTATIVES_MAX + 1):
-                try:
-                    return agent.run_sync(message, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    derniere = exc
-                    vide = 'without content or tool calls' in str(exc)
-                    if not vide and not _retry.est_reessayable(exc):
-                        raise
-                    if _retry.est_timeout(exc):
-                        timeouts += 1
-                        if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
-                            raise
-                    if tentative >= _retry.TENTATIVES_MAX:
-                        raise
-                    attente = _retry.delai_avant_reessai(tentative, exc)
-                    logger.warning("Boucle: echec tentative %d/%d type=%s, reessai dans %.1fs",
-                                   tentative, _retry.TENTATIVES_MAX,
-                                   type(exc).__name__, attente)
-                    import time as _time
-                    _time.sleep(attente)
-                finally:
+            try:
+                for tentative in range(1, _retry.TENTATIVES_MAX + 1):
                     try:
-                        import asyncio as _aio
-                        _aio.run(fermer_modele(getattr(agent, 'model', None)))
-                    except Exception:  # noqa: BLE001
-                        pass
-            raise derniere
+                        with capture_run_messages() as suivi:
+                            return await agent.run(prochain_message, **kwargs)
+                    except Exception as exc:  # noqa: BLE001
+                        from pydantic_ai.messages import ModelRequest
+                        if suivi and not isinstance(suivi[-1], ModelRequest):
+                            # Une panne dans un outil peut avoir eu un effet sans
+                            # reçu. Ne jamais le rejouer automatiquement.
+                            raise
+                        vide = 'without content or tool calls' in str(exc)
+                        if not vide and not _retry.est_reessayable(exc):
+                            raise
+                        if _retry.est_timeout(exc):
+                            timeouts += 1
+                            if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
+                                raise
+                        if tentative >= _retry.TENTATIVES_MAX:
+                            raise
+                        if suivi:
+                            # Reprendre la requête interrompue avec les reçus
+                            # déjà acquis. Renvoyer le prompt initial rejouait
+                            # les outils et faisait perdre leurs résultats.
+                            kwargs['message_history'] = list(suivi)
+                            prochain_message = None
+                        attente = _retry.delai_avant_reessai(tentative, exc)
+                        logger.warning('Boucle: echec tentative %d/%d type=%s, reprise avec %d messages dans %.1fs',
+                                       tentative, _retry.TENTATIVES_MAX,
+                                       type(exc).__name__, len(suivi), attente)
+                        await asyncio.sleep(attente)
+            finally:
+                # Un client fermé entre deux essais ne peut pas être réutilisé.
+                await fermer_modele(getattr(agent, 'model', None))
 
-        if delai is not None:
-            return asyncio.run(asyncio.wait_for(_exec_async(), timeout=max(0.0, delai)))
-        return _exec_sync()
+        async def executer():
+            if delai is None:
+                return await _exec_async()
+            return await asyncio.wait_for(_exec_async(), timeout=max(0.0, delai))
+
+        return asyncio.run(executer())
 
     def process_message_stream(
         self, user, message, attachment=None, *, use_streaming=True,

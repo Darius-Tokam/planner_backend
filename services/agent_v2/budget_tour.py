@@ -311,32 +311,40 @@ def _operation_db(fonction, *args):
         connections.close_all()
 
 
-def modele_borne(modele, phase='planning'):
+def modele_borne(modele, phase='planning', *, ecarter_timeout=False):
     """Chaque tentative de fallback possède sa propre provision."""
     from pydantic_ai.models.fallback import FallbackModel
     if isinstance(modele, ModeleBorne):
         modele.phase = phase
+        modele.ecarter_timeout = modele.ecarter_timeout or ecarter_timeout
         return modele
     if isinstance(modele, FallbackModel):
-        return FallbackModel(*(modele_borne(m, phase) for m in modele.models),
+        return FallbackModel(*(modele_borne(m, phase, ecarter_timeout=True) for m in modele.models),
                              fallback_on=modele._fallback_on)
-    return ModeleBorne(modele, phase)
+    return ModeleBorne(modele, phase, ecarter_timeout=ecarter_timeout)
 
 
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic import TypeAdapter
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.exceptions import ModelAPIError
 
 _PARAMETRES = TypeAdapter(ModelRequestParameters)
 
 
 class ModeleBorne(WrapperModel):
-    def __init__(self, modele, phase):
+    def __init__(self, modele, phase, *, ecarter_timeout=False):
         super().__init__(modele)
         self.phase = phase
+        self.ecarter_timeout = ecarter_timeout
+        self.delai_depasse = False
 
     async def _ouvrir(self, messages, reglages, parametres):
+        if self.delai_depasse and self.ecarter_timeout:
+            # La chaîne appartient à un seul tour. Ne pas repayer la même
+            # attente à chaque outil après avoir basculé vers le secours.
+            raise ModelAPIError(self.model_name, 'Fournisseur écarté pour ce tour après délai dépassé')
         octets = len(ModelMessagesTypeAdapter.dump_json(messages)) + len(
             _PARAMETRES.dump_json(parametres))
         entree = (octets + 2) // 3 + 2048
@@ -344,7 +352,8 @@ class ModeleBorne(WrapperModel):
         appel = await asyncio.to_thread(_operation_db, AppelFournisseur, self.phase, self.system,
                                         entree, reglages.get('max_tokens', 4096))
         reglages['max_tokens'] = appel.max_sortie
-        appel.delai = min(float(reglages.get('timeout') or 60), appel.delai)
+        plafond = (_entier('AGENT_MODELE_DELAI', 25) if self.phase == 'planning' else 60)
+        appel.delai = min(float(reglages.get('timeout') or plafond), plafond, appel.delai)
         reglages['timeout'] = appel.delai
         # Google refuse un en-tête HTTP inférieur à 10 s. Le délai local
         # reste celui du tour, même quand son transport exige ce minimum.
@@ -360,6 +369,15 @@ class ModeleBorne(WrapperModel):
                 timeout=appel.delai)
             await asyncio.to_thread(_operation_db, appel.terminer, _usage_sdk(reponse.usage), True)
             return reponse
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            # FallbackModel ne reconnaît pas les échéances locales asyncio.
+            # Garder la cause pour distinguer ce délai d'une erreur de code.
+            self.delai_depasse = True
+            raise ModelAPIError(self.model_name, 'Délai du fournisseur dépassé') from exc
+        except ModelAPIError as exc:
+            from services.agent_v2.retry import est_timeout
+            self.delai_depasse = self.delai_depasse or est_timeout(exc)
+            raise
         finally:
             await asyncio.to_thread(_operation_db, appel.terminer)
 
@@ -372,9 +390,13 @@ class ModeleBorne(WrapperModel):
                         model_request_parameters, run_context) as reponse:
                     yield reponse
                     await asyncio.to_thread(_operation_db, appel.terminer, _usage_sdk(reponse.usage()), True)
-        except TimeoutError as exc:
-            # Sur Python 3.10, AnyIO et asyncio n'utilisent pas la même classe.
-            raise asyncio.TimeoutError from exc
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            self.delai_depasse = True
+            raise ModelAPIError(self.model_name, 'Délai du fournisseur dépassé') from exc
+        except ModelAPIError as exc:
+            from services.agent_v2.retry import est_timeout
+            self.delai_depasse = self.delai_depasse or est_timeout(exc)
+            raise
         finally:
             await asyncio.to_thread(_operation_db, appel.terminer)
 # redeploy

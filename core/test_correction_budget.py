@@ -16,6 +16,7 @@ from services.agent_v2.budget_tour import (
     fermer_trace, appel_fournisseur, modele_borne,
 )
 from services.agent_v2.trace_tour import trace_courante
+from pydantic_ai.exceptions import ModelAPIError
 from core.models import BudgetJetonsJournalier, ReservationBudgetJetons
 
 
@@ -254,9 +255,10 @@ class ReservationBudgetTests(TransactionTestCase):
                 raise
         trace = self.ouvrir()
         depart = time.monotonic()
-        with self.assertRaises(asyncio.TimeoutError):
+        with self.assertRaises(ModelAPIError) as erreur:
             Agent(modele_borne(GoogleLocal(lent), 'jugement')).run_sync(
                 'question', model_settings={'timeout': 0.1})
+        self.assertIsInstance(erreur.exception.__cause__, (TimeoutError, asyncio.TimeoutError))
         self.assertLess(time.monotonic() - depart, 0.8)
         self.assertEqual(reglages[0]['timeout'], 10.0)
         self.assertEqual(annulations, [True])
@@ -285,8 +287,9 @@ class ReservationBudgetTests(TransactionTestCase):
                     'question', model_settings={'timeout': 0.1}) as resultat:
                 async for texte in resultat.stream_text(delta=True):
                     pass
-        with self.assertRaises(asyncio.TimeoutError):
+        with self.assertRaises(ModelAPIError) as erreur:
             asyncio.run(executer())
+        self.assertIsInstance(erreur.exception.__cause__, (TimeoutError, asyncio.TimeoutError))
         self.assertEqual(annulations, [True])
         self.assertFalse(trace.usages[0]['usage_connu'])
         self.assertGreater(self.compteur().jetons, 0)
