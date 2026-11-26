@@ -43,6 +43,12 @@ elif mode == 'worker':
         from services.agent_runtime.workflow import configure_agent
         configure_agent(model())
         print('QA: controlled provider, no semantic/provider performance claims.', flush=True)
+    elif os.getenv('PLANNER_QA_RAILWAY_RELAY') == '1':
+        from django.conf import settings
+        from provider_ssh_relay import model
+        from services.agent_runtime.workflow import configure_agent
+        configure_agent(model(settings.PLANNER_RUNTIME_MODEL))
+        print('QA: real provider via authenticated buffered relay; local fixtures only.', flush=True)
     call_command('run_chat_worker')
 else:
     raise SystemExit('Use seed, api or worker.')

@@ -106,7 +106,7 @@ def execute(user: User, **kwargs) -> ToolResult:
                      f"'{block.title}': {place.message}"),
             # La raison du placement echoue est celle de l'outil interne :
             # on la relaie, les branches specifiques (conflit, ...) restent prioritaires.
-            public=place.public,
+            public=place.public, issue=place.issue, cause=place.cause,
         )
 
     donnees = dict(place.data or {})

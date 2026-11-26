@@ -16,6 +16,7 @@ from .catalog import TOOL_MAP
 from . import policy, store
 from .prompts import SYSTEM
 from .tools import execute_call, schema_for, failure
+from .decision import DecisionModel, decision_pending
 
 CORE_TOOLS = frozenset({
     'list_tasks', 'create_task', 'update_task', 'complete_task', 'delete_task',
@@ -37,6 +38,8 @@ class Dependencies:
 
 
 def compact_result(result):
+    if result.get('data', {}).get('requires_user_decision'):
+        result = {**result, 'requires_user_decision': True}
     if len(json.dumps(result, default=str)) <= 16000 or not result.get('operation_id'):
         return result
     compact = {key: value for key, value in result.items() if key not in ('data', 'receipt', 'message')} | {
@@ -171,6 +174,8 @@ def build_agent(model, *, durable=False):
                 # Tool-call order is not authorization. A clarification in this
                 # response postpones every mutation, including calls before it.
                 if tool_name in policy.MUTATIONS or tool_name == 'send_notification':
+                    if decision_pending(ctx.messages):
+                        return failure('decision_pending', 'Cette contrainte exige une décision humaine. Lis les disponibilités puis appelle ask_question_custom avant toute nouvelle modification.')
                     if ctx.messages and any(isinstance(part, ToolCallPart) and part.tool_name == 'ask_question_custom'
                                             for part in ctx.messages[-1].parts):
                         return failure('clarification_pending', 'Attends la réponse à la question avant toute modification. Rappelle ensuite les outils nécessaires.')
@@ -205,17 +210,19 @@ def build_agent(model, *, durable=False):
             description = ('Crée des créneaux hebdomadaires uniquement quand la répétition est demandée. '
                            'Un jour ou une date unique utilise schedule_task_at. Nécessite titre, jours, début et fin. '
                            'Ne déduis jamais la répétition du type d’activité. Une fin avant le début traverse minuit. '
-                           'Les conflits sont retournés par l’outil.')
+                           'Avec des heures explicites, appelle cet outil directement : il valide avant écriture et retourne les conflits.')
         elif name == 'schedule_task_at':
             description = ('Réserve un événement unique : titre, date, heure de début et de fin. '
                            'Le nom générique donné par l’utilisateur suffit comme titre. '
                            'Une fin avant le début traverse minuit. Une nouvelle invocation avec le même titre '
                            'et la même date met à jour ce créneau. Les autres champs sont facultatifs. '
+                           'Avec des heures explicites, appelle cet outil directement : il valide avant écriture et retourne les conflits. '
                            'Si une heure imposée manque, demande uniquement cette heure avec ask_question_custom.')
         if name == 'ask_question_custom':
-            description = ('Suspend l’action pour obtenir UNIQUEMENT les données obligatoires qui manquent encore. '
+            description = ('Suspend l’action pour obtenir une information indispensable, résoudre une ambiguïté ou choisir une solution après un conflit. '
                            'Reprends toutes les valeurs déjà connues, même un titre générique. '
-                           'Aucune question facultative, proposition supplémentaire ou reconfirmation d’une valeur explicite. '
+                           'Un horaire explicite en conflit exige un nouveau choix, jamais un déplacement silencieux. '
+                           'Aucune question facultative ni reconfirmation d’une valeur explicite encore valide. '
                            'text: libre; choice: 2 à 4 choix exhaustifs; form: seulement les champs indispensables manquants, '
                            'ou radio avec allow_other. Une réponse '
                            'reprend exactement cet appel. Les confirmations sont créées par l’outil métier.')
@@ -246,8 +253,14 @@ def build_agent(model, *, durable=False):
     tools.extend([Tool(read_turn, takes_ctx=True, description='Relit prompt, answer ou operations d’une demande précédente par référence, sans perdre les corrections anciennes.'),
                   Tool(load_tools, takes_ctx=True, description='Active les schémas complets du catalogue:\n' + catalog),
                   Tool(read_tool_result, takes_ctx=True, description='Relit une portion d’un résultat volumineux par référence.')])
-    agent = Agent(model, name='planner_v3', deps_type=Dependencies, output_type=[str, DeferredToolRequests],
+    agent = Agent(DecisionModel(model), name='planner_v3', deps_type=Dependencies, output_type=[str, DeferredToolRequests],
                   instructions=SYSTEM, tools=tools, event_stream_handler=stream_events, retries=2)
+    @agent.output_validator
+    async def require_resolved_decision(ctx, output):
+        if isinstance(output, str) and decision_pending(ctx.messages):
+            from pydantic_ai import ModelRetry
+            raise ModelRetry('Une décision reste requise par un outil. Utilise ask_question_custom; tu peux encore lire les disponibilités avant de la formuler.')
+        return output
     if durable:
         from pydantic_ai.durable_exec.dbos import DBOSAgent
         return DBOSAgent(agent, model_step_config={'retries_allowed': False})

@@ -41,7 +41,10 @@ def execute(user: User, **kwargs) -> ToolResult:
         blocks = blocks.filter(block_type=block_type)
 
     blocks = blocks.order_by("day_of_week", "start_time")
-    block_list = [commun._block_to_dict(b) for b in blocks]
+    from services.commute import commute_parts
+    block_list = [{**commun._block_to_dict(b),
+                   'reservation_policy': commute_parts(b, user.profile, recurring=True) if not b.is_flexible else {}}
+                  for b in blocks.select_related('place')]
 
     return ToolResult(
         success=True,

@@ -44,7 +44,7 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python manage.py migrate --noinput
       - name: Transactions, autorisations, API et concurrence
-        run: python manage.py test core.test_runtime_review core.test_agent_runtime_persistence core.test_agent_runtime_tools core.test_agent_runtime_loop core.test_agent_runtime_api core.test_agent_runtime_concurrency --noinput
+        run: python manage.py test core.test_planning_constraints core.test_runtime_review core.test_agent_runtime_persistence core.test_agent_runtime_tools core.test_agent_runtime_loop core.test_agent_runtime_api core.test_agent_runtime_concurrency --noinput
       - name: Processus tue apres commit puis repris
         run: python scripts/check_runtime_recovery.py
       - name: Adaptateur DBOSAgent reel

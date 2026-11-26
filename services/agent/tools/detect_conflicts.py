@@ -1,18 +1,22 @@
 """Outil detect_conflicts."""
+from datetime import date, timedelta
+from django.utils import timezone
+from services.scheduling.constraints import day_constraints, describe
 from django.contrib.auth.models import User
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.models import RecurringBlock
 from .base import ISSUE_TERMINEE, ToolResult
 from . import commun
-from .commun import DAY_NAMES, _time_to_minutes
+from .commun import DAY_NAMES
 
 NAME = "detect_conflicts"
-DESCRIPTION = "Détecte les chevauchements et conflits dans le planning de l'utilisateur."
+DESCRIPTION = "Détecte les conflits du planning sur sept jours à partir de start_date (défaut aujourd'hui), en distinguant activités, transport, préparation et sommeil. Inclut les tâches datées et les occurrences réelles."
 
 
 class Parametres(BaseModel):
     model_config = ConfigDict(extra="ignore")
+
+    start_date: str | None = Field(default=None, description="Début de la fenêtre de sept jours, YYYY-MM-DD; défaut aujourd’hui.")
 
     day_of_week: commun.JourChaine = Field(
         default=None,
@@ -29,55 +33,41 @@ def execute(user: User, **kwargs) -> ToolResult:
     # tromper.
     from .commun import normaliser_jours
     jours = normaliser_jours(kwargs.get("day_of_week"))
-    blocks = RecurringBlock.objects.filter(user=user, active=True)
-
-    if jours:
-        days_to_check = [jours[0]]
-    else:
-        days_to_check = range(7)
-
+    try:
+        start = date.fromisoformat(kwargs['start_date']) if kwargs.get('start_date') else timezone.localdate()
+    except (TypeError, ValueError):
+        return ToolResult(False, message='Date invalide. Utilise YYYY-MM-DD.')
     conflicts = []
-
-    for d in days_to_check:
-        day_blocks = list(blocks.filter(day_of_week=d).order_by("start_time"))
-
-        for i in range(len(day_blocks)):
-            for j in range(i + 1, len(day_blocks)):
-                a = day_blocks[i]
-                b = day_blocks[j]
-
-                a_start = _time_to_minutes(a.start_time)
-                a_end = _time_to_minutes(a.end_time)
-                b_start = _time_to_minutes(b.start_time)
-                b_end = _time_to_minutes(b.end_time)
-
-                # Handle non-night-shift blocks
-                if not a.is_night_shift and not b.is_night_shift:
-                    if a_start < b_end and b_start < a_end:
-                        overlap_start = max(a_start, b_start)
-                        overlap_end = min(a_end, b_end)
-                        conflicts.append({
-                            "day": d,
-                            "day_name": DAY_NAMES[d],
-                            "block_a": {"id": a.id, "title": a.title, "time": f"{a.start_time.strftime('%H:%M')}-{a.end_time.strftime('%H:%M')}"},
-                            "block_b": {"id": b.id, "title": b.title, "time": f"{b.start_time.strftime('%H:%M')}-{b.end_time.strftime('%H:%M')}"},
-                            "overlap_minutes": overlap_end - overlap_start,
-                        })
+    for offset in range(7):
+        day = start + timedelta(days=offset)
+        if jours and day.weekday() != jours[0]:
+            continue
+        constraints = day_constraints(user, day, hard_only=True)
+        for index, left in enumerate(constraints):
+            for right in constraints[index + 1:]:
+                identity = lambda c: (c.source['type'], c.source['id'], c.source['date'])
+                if identity(left) == identity(right) or not right.overlaps(left.start, left.end):
+                    continue
+                conflicts.append({
+                    'date': day.isoformat(), 'day': day.weekday(), 'day_name': DAY_NAMES[day.weekday()],
+                    'block_a': {**left.source, 'time': f"{left.source['start_time']}-{left.source['end_time']}"},
+                    'block_b': {**right.source, 'time': f"{right.source['start_time']}-{right.source['end_time']}"},
+                    'constraints': [left.as_dict((right.start, right.end)), right.as_dict((left.start, left.end))],
+                    'explanation': describe(left) + ' chevauche ' + describe(right),
+                    'overlap_minutes': min(left.end, right.end) - max(left.start, right.start),
+                })
 
     # Contrat d'issue (audit 2026-10-13): les titres sont des donnees
     # lues, on les nomme sans rien inventer.
     if conflicts:
-        lignes = "\n".join(
-            f"- {c['day_name']} : {c['block_a']['title']} "
-            f"({c['block_a']['time']}) chevauche {c['block_b']['title']} "
-            f"({c['block_b']['time']})"
-            for c in conflicts)
+        lignes = '\n'.join(f"- {c['date']} : {c['explanation']}" for c in conflicts)
         public = f"{len(conflicts)} conflit(s) dans ton horaire :\n{lignes}"
     else:
         public = "Aucun conflit détecté dans ton horaire."
     return ToolResult(
         success=True,
-        data={"conflicts": conflicts, "count": len(conflicts)},
+        data={"conflicts": conflicts, "count": len(conflicts),
+              "start_date": start.isoformat(), "end_date": (start + timedelta(days=6)).isoformat()},
         message=f"{len(conflicts)} conflit(s) détecté(s)." if conflicts else "Aucun conflit détecté.",
         issue=ISSUE_TERMINEE, cause="", public=public,
     )

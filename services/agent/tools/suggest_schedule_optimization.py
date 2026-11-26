@@ -1,5 +1,8 @@
 """Outil suggest_schedule_optimization."""
 from typing import Literal
+from datetime import timedelta
+from services.scheduling.constraints import day_constraints
+from services.scheduling.placement import _merge_intervals
 
 from django.contrib.auth.models import User
 from django.utils import timezone
@@ -43,18 +46,20 @@ def execute(user: User, **kwargs) -> ToolResult:
         "daily_hours": {},
     }
 
-    # Analyze blocks per day and type
-    for b in blocks:
-        analysis["days_with_blocks"].add(b.day_of_week)
-        analysis["block_types"][b.block_type] = analysis["block_types"].get(b.block_type, 0) + 1
-
-        start = _time_to_minutes(b.start_time)
-        end = _time_to_minutes(b.end_time)
-        duration = (end - start) if end > start else (24 * 60 - start + end)
-        day_name = DAY_NAMES[b.day_of_week]
-        analysis["daily_hours"][day_name] = analysis["daily_hours"].get(day_name, 0) + duration / 60
-
-    analysis["days_with_blocks"] = list(analysis["days_with_blocks"])
+    # Analyse the effective dated schedule, including tasks and reserved margins.
+    window_start = timezone.localdate()
+    for offset in range(7):
+        day = window_start + timedelta(days=offset)
+        constraints = day_constraints(user, day)
+        if constraints:
+            analysis['days_with_blocks'].add(day.weekday())
+        analysis['daily_hours'][DAY_NAMES[day.weekday()]] = sum(
+            end - start for start, end in _merge_intervals([(c.start, c.end) for c in constraints])) / 60
+        for c in constraints:
+            if c.kind in ('activity', 'sleep'):
+                kind = c.source.get('block_type', 'task')
+                analysis['block_types'][kind] = analysis['block_types'].get(kind, 0) + 1
+    analysis['days_with_blocks'] = sorted(analysis['days_with_blocks'])
 
     # Check for missing sleep blocks
     if "sleep" not in analysis["block_types"]:
@@ -120,6 +125,9 @@ def execute(user: User, **kwargs) -> ToolResult:
         success=True,
         data={
             "analysis": {
+                "start_date": window_start.isoformat(),
+                "end_date": (window_start + timedelta(days=6)).isoformat(),
+                "hours_include_reserved_margins": True,
                 "total_blocks": analysis["total_blocks"],
                 "pending_tasks": analysis["pending_tasks"],
                 "block_types": analysis["block_types"],

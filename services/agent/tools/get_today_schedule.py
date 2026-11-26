@@ -6,7 +6,8 @@ from django.utils import timezone
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.scheduling.day_view import effective_day_entries
-from services.scheduling.placement import open_intervals
+from services.scheduling.placement import free_gaps, _merge_intervals
+from services.scheduling.constraints import day_constraints
 from .base import ISSUE_ECHEC, ToolResult
 from .commun import DAY_NAMES, DAY_START_MIN, DAY_END_MIN, _free_slots_from_intervals
 
@@ -53,7 +54,8 @@ def execute(user: User, **kwargs) -> ToolResult:
     # Créneaux libres 7h-23h via la logique unique overnight-aware (compte
     # correctement un quart de nuit du jour ET le débordement de la veille,
     # + les blocs déjà planifiés). Corrige le faux "libre 7h-23h".
-    intervals = open_intervals(user, target_date, DAY_START_MIN, DAY_END_MIN)
+    constraints = day_constraints(user, target_date)
+    intervals = free_gaps(_merge_intervals([(c.start,c.end) for c in constraints]), DAY_START_MIN, DAY_END_MIN)
     # AUJOURD'HUI, le passé n'est pas libre, comme dans find_free_slots.
     # Vécu (banc du 2026-09-15, 16:31): la ligne « Libre : 15 h 50 à 18 h »
     # de cette lecture est devenue un bouton « 15 h 50 à 18 h ».
@@ -67,6 +69,7 @@ def execute(user: User, **kwargs) -> ToolResult:
         success=True,
         data={
             "date": target_date.isoformat(),
+            "constraints": [c.as_dict() for c in constraints],
             "day_name": day_name,
             "blocks": blocks,
             "free_slots": free_slots,

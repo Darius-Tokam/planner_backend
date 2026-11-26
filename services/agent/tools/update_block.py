@@ -6,6 +6,7 @@ from core.models import RecurringBlock
 from services.scheduling.overlap import find_recurring_conflicts, is_overnight, parse_time
 from . import commun
 from .base import ToolResult
+from services.scheduling.constraints import describe_data
 
 NAME = "update_block"
 DESCRIPTION = "Modifie un bloc récurrent existant (titre, horaires, JOUR, lieu, flexibilité). Résous le bloc par son nom/jour/heure via list_blocks; ne demande JAMAIS un identifiant à l'utilisateur. Pour DÉPLACER un bloc vers un autre jour (ex: 'déplace mon atelier du lundi au mardi'), passe day_of_week (0=Lundi..6=Dimanche): c'est un déplacement PROPRE en place. N'utilise JAMAIS delete_block+create_block pour déplacer (ça crée des doublons). flexibility='fixed' verrouille/protège le bloc; flexibility='flexible' le rend déplaçable. Pour annuler/ignorer UN SEUL jour, n'utilise PAS update_block -> skip_block_occurrence."
@@ -115,38 +116,6 @@ def execute(user: User, **kwargs) -> ToolResult:
         new_flexibility = block.flexibility or RecurringBlock.default_flexibility_for(new_block_type)
     new_is_flexible = new_flexibility == RecurringBlock.FLEXIBILITY_FLEXIBLE
 
-    # Contrôle de chevauchement sur le jour CIBLE (en s'excluant soi-même).
-    conflicts = find_recurring_conflicts(
-        user,
-        new_day,
-        new_start,
-        new_end,
-        night,
-        exclude_id=block.id,
-        new_is_flexible=new_is_flexible,
-    )
-    if conflicts:
-        o = conflicts[0]
-        return ToolResult(
-            success=False,
-            data={"conflit": {
-                "titre": o.title,
-                "debut": o.start_time.strftime('%H:%M'),
-                "fin": o.end_time.strftime('%H:%M'),
-                "jour": new_day,
-            }},
-            message=(
-                f"Modification annulée: chevauchement avec '{o.title}' "
-                f"({o.start_time.strftime('%H:%M')}-{o.end_time.strftime('%H:%M')})."
-            ),
-        )
-
-    if kwargs.get("title") is not None:
-        block.title = kwargs["title"]
-    if kwargs.get("location") is not None:
-        block.location = kwargs["location"]
-    if kwargs.get("block_type") is not None:
-        block.block_type = kwargs["block_type"]
     from datetime import date as dt_date
     for key in ("start_date", "end_date"):
         if kwargs.get(key) is None:
@@ -169,6 +138,43 @@ def execute(user: User, **kwargs) -> ToolResult:
             "peut-être dans le passé : demande-lui de confirmer l'année."),
             public=("Je n'ai pas modifié le créneau : la date de fin est avant la date de début. "
                     "Vérifie l'année de la date de fin."))
+
+    # Contrôle de chevauchement sur le jour CIBLE (en s'excluant soi-même).
+    conflicts = find_recurring_conflicts(
+        user,
+        new_day,
+        new_start,
+        new_end,
+        night,
+        exclude_id=block.id,
+        new_is_flexible=new_is_flexible, start_date=block.start_date, end_date=block.end_date,
+    )
+    if conflicts:
+        o = conflicts[0]
+        from services.commute import block_commute_minutes
+        before, after = block_commute_minutes(block, getattr(user, 'profile', None))
+        return ToolResult(
+            success=False,
+            cause="planning_conflict",
+            data={"alternatives_need_validation": True, "requires_user_decision": True,
+                "requested_reservation": {"before_minutes": before, "after_minutes": after},
+                "conflicts": [d for b in conflicts for d in b.planning_conflicts], "conflit": {
+                "titre": o.title,
+                "debut": o.start_time.strftime('%H:%M'),
+                "fin": o.end_time.strftime('%H:%M'),
+                "jour": new_day,
+            }},
+            message='Modification annulée. Contraintes en conflit : '
+                    + '; '.join(describe_data(d) for b in conflicts for d in b.planning_conflicts)
+                    + f'. Le bloc déplacé réserve aussi {before} min avant et {after} min après. Vérifie les alternatives avec ces marges.',
+        )
+
+    if kwargs.get("title") is not None:
+        block.title = kwargs["title"]
+    if kwargs.get("location") is not None:
+        block.location = kwargs["location"]
+    if kwargs.get("block_type") is not None:
+        block.block_type = kwargs["block_type"]
     block.flexibility = new_flexibility
     block.start_time = new_start
     block.end_time = new_end

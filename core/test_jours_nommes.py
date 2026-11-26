@@ -199,7 +199,7 @@ class FiltresDeLectureTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='filtre', password='x')
         RecurringBlock.objects.create(
-            user=self.user, title='Match', block_type='sport',
+            user=self.user, title='Match', block_type='sport', flexibility='fixed',
             day_of_week=5, start_time='13:00', end_time='14:30')
 
     def test_list_blocks_filtre_par_nom(self):

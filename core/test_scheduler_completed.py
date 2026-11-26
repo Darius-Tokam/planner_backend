@@ -18,7 +18,7 @@ from django.utils import timezone
 from core.models import ScheduledBlock, Task
 from services.scheduling.placement import fixed_busy_intervals
 from services.agent.tools import find_free_slots, harnais
-from services.agent.tools.commun import _first_conflicting_item
+from services.agent.tools.commun import _window_conflict
 
 DEMAIN = date.today() + timedelta(days=1)
 
@@ -59,9 +59,9 @@ class CompletedTaskFreesSlotTests(TestCase):
     def test_le_conflit_nomme_ignore_les_taches_faites(self):
         _place(self.user, self._task('Faite'), time(18, 0), time(20, 0), done=True)
         _place(self.user, self._task('Active'), time(19, 0), time(21, 0))
-        hit = _first_conflicting_item(self.user, DEMAIN, 18 * 60, 22 * 60)
+        hit = _window_conflict(self.user, DEMAIN, 18 * 60, 22 * 60)
         self.assertIsNotNone(hit)
-        self.assertEqual(hit[0], 'Active', 'jamais nommer une tache terminee comme conflit')
+        self.assertEqual(hit.data['conflict']['titre'], 'Active', 'jamais nommer une tache terminee comme conflit')
 
 
 class FreeSlotsClampedToNowTests(TestCase):

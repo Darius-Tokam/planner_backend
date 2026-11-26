@@ -168,7 +168,8 @@ class ContexteConversationTests(TestCase):
         self.assertEqual(resultat.data['fixed_conflicts'], [
             {'start_time': '09:00', 'end_time': '09:15'},
             {'start_time': '09:30', 'end_time': '10:00'}])
-        self.assertFalse(resultat.data['conflict_is_exhaustive'])
+        self.assertTrue(resultat.data['conflict_is_exhaustive'])
+        self.assertEqual(len(resultat.data['conflicts']), 2)
 
 
 class RepriseReelleTests(TransactionTestCase):

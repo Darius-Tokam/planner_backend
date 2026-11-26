@@ -86,10 +86,10 @@ class FlexiblePlacementReadToolTests(TestCase):
             start_time="08:00", end_time="09:00",))
 
         self.assertFalse(res.success)
-        self.assertEqual(
-            res.data["conflict"],
-            {"start_time": "00:00", "end_time": "14:00", "titre": None, "sommeil": True},
-        )
+        self.assertEqual(res.data['conflict']['start_time'], '07:00')
+        self.assertEqual(res.data['conflict']['end_time'], '14:00')
+        self.assertEqual(res.data['conflict']['titre'], 'Sommeil')
+        self.assertTrue(res.data['conflict']['sommeil'])
         self.assertEqual(ScheduledBlock.objects.filter(user=self.user).count(), 0)
 
 

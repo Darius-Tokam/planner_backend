@@ -312,16 +312,15 @@ class RecurringBlockSerializer(serializers.ModelSerializer):
                 bool(is_night_shift),
                 exclude_id=getattr(self.instance, 'id', None),
                 new_is_flexible=is_flexible,
+                start_date=attrs.get('start_date', getattr(self.instance, 'start_date', None)),
+                end_date=attrs.get('end_date', getattr(self.instance, 'end_date', None)),
             )
             if conflicts:
                 overlap = conflicts[0]
+                from services.scheduling.constraints import describe_data
                 raise serializers.ValidationError({
                     'non_field_errors': [
-                        (
-                            f"Chevauchement avec '{overlap.title}' "
-                            f"({overlap.start_time.strftime('%H:%M')}-"
-                            f"{overlap.end_time.strftime('%H:%M')})."
-                        )
+                        'Chevauchement : ' + '; '.join(describe_data(c) for c in overlap.planning_conflicts)
                     ]
                 })
         return attrs

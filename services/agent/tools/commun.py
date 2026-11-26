@@ -33,7 +33,7 @@ from services.scheduling.placement import (
 from services.scheduling.solve_day import (
     empreinte_entrees_jour, empreinte_entrees_semaine, solve_day, solve_placement,
 )
-from .base import ToolResult
+from .base import ISSUE_ECHEC, ToolResult
 
 
 def _parse_occurrence(kwargs):
@@ -353,125 +353,56 @@ def _free_slots_from_intervals(intervals, min_duration: int) -> list:
     return out
 
 
-def _first_conflicting_item(user, target_date, s, e, exclude_scheduled_id=None):
-    """(titre, start_min, end_min) du premier élément REEL qui chevauche
-    [s,e], ou None. fixed_busy_intervals renvoie l'union FUSIONNÉE de la
-    journée (vécu: refus « chevauche 08:00-21:30 » pour un trou de 15 min,
-    illisible et faux): on nomme l'occupation précise à la place."""
-    from django.db.models import Q
-    from core.models import RecurringBlock, ScheduledBlock
-    items = []
-    # Meme regle que fixed_busy_intervals: une tache terminee n'occupe plus
-    # son creneau, donc elle ne peut pas non plus etre NOMMEE comme conflit.
-    qs = ScheduledBlock.objects.filter(user=user, date=target_date).exclude(
-        Q(actually_completed=True) | Q(task__completed=True)
-    ).select_related('task')
-    if exclude_scheduled_id is not None:
-        qs = qs.exclude(id=exclude_scheduled_id)
-    for sb in qs:
-        bs = sb.start_time.hour * 60 + sb.start_time.minute
-        be = sb.end_time.hour * 60 + sb.end_time.minute
-        if be <= bs:
-            be = 24 * 60
-        items.append((sb.task.title, bs, be))
-    for b in recurring_occurrences(user, target_date):
-        if b.is_flexible and not b.occurrence_override:
-            continue
-        bs = b.start_time.hour * 60 + b.start_time.minute
-        be = b.end_time.hour * 60 + b.end_time.minute
-        if be <= bs:
-            be = 24 * 60
-        items.append((b.title, bs, be))
-    hits = [it for it in items if s < it[2] and it[1] < e]
-    return min(hits, key=lambda it: it[1]) if hits else None
-
-
 def _window_conflict(user, target_date, s, e, exclude_scheduled_id=None):
-    """ToolResult d'erreur si la fenêtre [s,e] (minutes) du jour target_date
-    chevauche un mur fixe ou le sommeil protégé; sinon None. Réutilisable pour
-    chaque moitié d'un événement ponctuel qui traverse minuit."""
-    murs = fixed_busy_intervals(user, target_date, exclude_scheduled_id=exclude_scheduled_id)
-    conflits_fixes = [{'start_time': _minutes_to_str(bs), 'end_time': _minutes_to_str(be)}
-                      for bs, be in murs if s < be and bs < e]
-    for bs, be in murs:
-        if s < be and bs < e:
-            item = _first_conflicting_item(user, target_date, s, e, exclude_scheduled_id)
-            titre = None
-            if item:
-                title, ibs, ibe = item
-                label = f"« {title} » ({_minutes_to_str(ibs)}-{_minutes_to_str(ibe)})"
-                bs, be = ibs, ibe
-                titre = title
-            else:
-                label = f"une occupation existante ({_minutes_to_str(bs)}-{_minutes_to_str(be)})"
-            return ToolResult(
-                success=False,
-                # Le conflit nommé est un exemple. Tous les murs de la fenêtre
-                # sont transmis : retirer le premier ne prouve pas sa libération.
-                data={"fixed_conflicts": conflits_fixes, "conflict_is_exhaustive": False,
-                      "conflict": {
-                    "start_time": _minutes_to_str(bs),
-                    "end_time": _minutes_to_str(be),
-                    "titre": titre,
-                    "sommeil": False,
-                }},
-                message=(
-                    f"Ce créneau ({_minutes_to_str(s)}-{_minutes_to_str(e)}) chevauche "
-                    f"{label}. Choisis un autre horaire libre."
-                ),
-            )
-    # Le sommeil reporte au lendemain d'un quart de nuit (placement.py) occupe
-    # le matin de ce jour: il est protege comme le sommeil place.
-    for bs, be in intervalles_sommeil_reporte(user, target_date):
-        if s < be and bs < e:
-            return ToolResult(
-                success=False,
-                data={"conflict": {
-                    "start_time": _minutes_to_str(bs),
-                    "end_time": _minutes_to_str(be),
-                    "titre": None,
-                    "sommeil": True,
-                }},
-                message=(
-                    f"Ce créneau ({_minutes_to_str(s)}-{_minutes_to_str(e)}) "
-                    f"chevauche le sommeil protégé "
-                    f"({_minutes_to_str(bs)}-{_minutes_to_str(be)}). "
-                    f"Choisis un autre horaire libre."
-                ),
-            )
-    for placement in place_day(user, target_date):
-        if placement["skipped"] or placement["block_type"] != "sleep":
-            continue
-        if placement.get("occurrence_override"):
-            continue
-        ps = placement["start_min"]
-        pe = placement["end_min"]
-        if ps is None or pe is None:
-            continue
-        sleep_pieces = [(ps, pe)] if pe > ps else [(ps, 24 * 60), (0, pe)]
-        for bs, be in sleep_pieces:
-            if s < be and bs < e:
-                conflict_start, conflict_end = bs, be
-                for os, oe in occupied_intervals(user, target_date, 0, 24 * 60):
-                    if s < oe and os < e:
-                        conflict_start, conflict_end = os, oe
-                        break
-                return ToolResult(
-                    success=False,
-                    data={"conflict": {
-                        "start_time": _minutes_to_str(conflict_start),
-                        "end_time": _minutes_to_str(conflict_end),
-                        "titre": None,
-                        "sommeil": True,
-                    }},
-                    message=(
-                        f"Ce créneau ({_minutes_to_str(s)}-{_minutes_to_str(e)}) "
-                        f"chevauche le sommeil protégé "
-                        f"({_minutes_to_str(conflict_start)}-{_minutes_to_str(conflict_end)}). "
-                        f"Choisis un autre horaire libre."
-                    ),
-                )
-    return None
+    """Explain every hard constraint intersecting [s,e), without losing provenance."""
+    from services.scheduling.constraints import day_constraints
+    hits = [c for c in day_constraints(user, target_date,
+        exclude_scheduled_id=exclude_scheduled_id, hard_only=True) if c.overlaps(s, e)]
+    return _conflict_result(target_date, s, e, [c.as_dict((s, e)) for c in hits])
+
+
+def _reservation_conflict(user, target_date, s, e, source, *, commute=None, exclude_ids=()):
+    """Validate both the activity and its own margins, including adjacent dates."""
+    from services.scheduling.constraints import components, day_constraints, on_day
+    parts = components(s, e, source, **(commute or {}))
+    hits = []
+    for shift in range(min(c.start for c in parts)//1440, (max(c.end for c in parts)-1)//1440+1):
+        day = target_date + timedelta(days=shift)
+        existing = day_constraints(user, day, exclude_scheduled_id=exclude_ids, hard_only=True)
+        for requested in on_day(parts, -shift*1440):
+            for constraint in existing:
+                if not constraint.overlaps(requested.start, requested.end):
+                    continue
+                detail = constraint.as_dict((requested.start, requested.end))
+                detail.update(date=day.isoformat(), requested_constraint=requested.as_dict(),
+                              requested_kind=requested.kind)
+                hits.append(detail)
+    return _conflict_result(target_date, s, e, hits)
+
+
+def _conflict_result(target_date, s, e, hits):
+    from services.scheduling.constraints import describe_data
+    if not hits:
+        return None
+    first = hits[0]
+    return ToolResult(
+        success=False, issue=ISSUE_ECHEC, cause='planning_conflict',
+        data={'date': target_date.isoformat(), 'mutated': False,
+              'alternatives_need_validation': True,
+              'requires_user_decision': True,
+              'requested': {'start_time': _minutes_to_str(s), 'end_time': _minutes_to_str(e)},
+              'conflicts': hits,
+              'conflict_is_exhaustive': True,
+              'fixed_conflicts': [{'start_time': c['start_time'], 'end_time': c['end_time']} for c in hits],
+              'conflict': {'start_time': first['start_time'], 'end_time': first['end_time'],
+                           'titre': first['source']['title'], 'sommeil': first['kind'] == 'sleep',
+                           'kind': first['kind'], 'source': first['source']}},
+        message=(f"Ce créneau ({_minutes_to_str(s)}-{_minutes_to_str(e)}) chevauche : "
+                 + '; '.join(describe_data(c) + (' face à ' + describe_data(c['requested_constraint'])
+                           if c.get('requested_kind', 'activity') != 'activity' else '') for c in hits)
+                 + '. Aucun changement effectué. Les marges ne sont pas les horaires des activités. '
+                   'Une autre heure ou la modification d’une contrainte demande le choix de l’utilisateur.'),
+    )
 
 
 def _mettre_en_forme_jour(arrangement):
@@ -488,6 +419,7 @@ def _executer_organize_day(user, target_date, apply, arrangement, expected_entri
 
     Séparé du solveur pour réutiliser la proposition mise en cache.
     """
+    from services.scheduling.constraints import day_constraints
     placed, overnight, skipped, listing = _mettre_en_forme_jour(arrangement)
     head = "Proposition (rien changé)"
     msg = f"{head} le {DAY_NAMES[target_date.weekday()]} {target_date.isoformat()}: {listing}."
@@ -508,6 +440,7 @@ def _executer_organize_day(user, target_date, apply, arrangement, expected_entri
         success=True,
         data={
             "applied": apply,
+            "constraints": [c.as_dict() for c in day_constraints(user, target_date, hard_only=True)],
             "date": target_date.isoformat(),
             "placed": [{"block_id": r["block_id"], "title": r["title"], "start_time": r["start_time"], "end_time": r["end_time"]} for r in placed],
             "overnight_kept": [{"block_id": r["block_id"], "title": r["title"], "start_time": r["start_time"], "end_time": r["end_time"]} for r in overnight],
@@ -525,6 +458,7 @@ def _mettre_en_forme_semaine(user, start, arrangements):
     Meme code que la boucle de _resoudre_semaine, sans le solveur: sert quand
     l'agent v2 fournit un arrangement deja resolu et valide (_arrangements).
     """
+    from services.scheduling.constraints import day_constraints
     days_data = []
     lines = []
     skipped_total = 0
@@ -537,6 +471,7 @@ def _mettre_en_forme_semaine(user, start, arrangements):
         skipped_total += len(skipped)
         days_data.append({
             "date": day.isoformat(),
+            "constraints": [c.as_dict() for c in day_constraints(user, day, hard_only=True)],
             "placed": [{"block_id": r["block_id"], "title": r["title"], "start_time": r["start_time"], "end_time": r["end_time"]} for r in placed],
             "overnight_kept": [{"block_id": r["block_id"], "title": r["title"], "start_time": r["start_time"], "end_time": r["end_time"]} for r in overnight],
             "skipped": [{"title": r["title"]} for r in skipped],

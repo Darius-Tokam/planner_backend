@@ -680,14 +680,13 @@ class DonneesDesOutilsTests(HarnaisGardes, TransactionTestCase):
         r = execute_tool('create_block', self.user, {
             'title': 'Statistiques', 'block_type': 'course', 'days': [0],
             'start_time': '10:00', 'end_time': '12:00'})
-        # Message capture sur le code d'avant le lot: octet pour octet.
-        self.assertEqual(r.message, "0 bloc(s) créé(s): Statistiques (10:00-12:00). 1 sauté(s): "
-                                    "Chevauchement avec 'Calcul différentiel' (10:00-11:50)")
+        self.assertEqual(r.cause, 'planning_conflict')
+        self.assertEqual(r.data['conflicts'][0]['source']['title'], 'Calcul différentiel')
         saut = r.data['skipped'][0]
         self.assertEqual(saut['motif'], 'chevauchement')
         self.assertEqual(saut['avec'], {'titre': 'Calcul différentiel', 'debut': '10:00', 'fin': '11:50'})
         self.assertEqual((saut['titre'], saut['debut'], saut['fin']), ('Statistiques', '10:00', '12:00'))
-        self.assertEqual(saut['reason'], "Chevauchement avec 'Calcul différentiel' (10:00-11:50)")
+        self.assertIn('activité (10:00-11:50)', saut['reason'])
 
         r = execute_tool('create_block', self.user, {
             'title': 'Calcul différentiel', 'block_type': 'course', 'days': [0],
@@ -713,7 +712,8 @@ class DonneesDesOutilsTests(HarnaisGardes, TransactionTestCase):
         r = execute_tool('update_block', self.user, {
             'block_id': maths_id, 'day_of_week': 'lundi', 'start_time': '10:30', 'end_time': '11:30'})
         self.assertFalse(r.success)
-        self.assertEqual(r.message, "Modification annulée: chevauchement avec 'Calcul différentiel' (10:00-11:40).")
+        self.assertEqual(r.cause, 'planning_conflict')
+        self.assertEqual(r.data['conflicts'][0]['source']['title'], 'Calcul différentiel')
         self.assertEqual(r.data['conflit'], {'titre': 'Calcul différentiel', 'debut': '10:00',
                                              'fin': '11:40', 'jour': 0})
 
@@ -741,7 +741,7 @@ class DonneesDesOutilsTests(HarnaisGardes, TransactionTestCase):
             'title': 'Série télé', 'date': '2026-09-16', 'start_time': '23:15', 'end_time': '23:45'})
         self.assertFalse(r.success)
         self.assertTrue(r.data['conflict']['sommeil'])
-        self.assertIsNone(r.data['conflict']['titre'])
+        self.assertEqual(r.data['conflict']['titre'], 'Sommeil')
 
         r = execute_tool('get_week_schedule', self.user, {})
         lundi = r.data['days'][0]
@@ -755,13 +755,16 @@ class DonneesDesOutilsTests(HarnaisGardes, TransactionTestCase):
     def test_le_sommeil_reporte_protege_le_matin(self):
         """Couture avec b2: le sommeil reporte apres un quart de nuit refuse
         la fenetre qu'il occupe, comme le sommeil place."""
-        with mock.patch('services.agent.tools.commun.intervalles_sommeil_reporte',
-                        return_value=[(120, 600)]):
-            r = execute_tool('schedule_task_at', self.user, {
-                'title': 'Café', 'date': '2026-09-18', 'start_time': '09:00', 'end_time': '09:30'})
+        self.bloc('Quart', 3, '19:00', '02:00', block_type='work', flexibility='fixed')
+        self.bloc('Sommeil', 3, '23:00', '07:00', block_type='sleep', flexibility='flexible')
+        r = execute_tool('schedule_task_at', self.user, {
+            'title': 'Café', 'date': '2026-09-18', 'start_time': '09:00', 'end_time': '09:30'})
         self.assertFalse(r.success)
-        self.assertEqual(r.data['conflict'], {'start_time': '02:00', 'end_time': '10:00',
-                                              'titre': None, 'sommeil': True})
+        self.assertEqual(r.data['conflict']['start_time'], '02:00')
+        self.assertEqual(r.data['conflict']['end_time'], '10:00')
+        self.assertEqual(r.data['conflict']['titre'], 'Sommeil')
+        self.assertTrue(r.data['conflict']['sommeil'])
+        self.assertEqual(r.data['conflicts'][0]['policy'], 'recovery_sleep')
 
 
 class DescriptionsTests(SimpleTestCase):
