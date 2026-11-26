@@ -3,6 +3,8 @@ URL configuration for core app.
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .runtime_views import (RuntimeConfigView, RuntimeRunListView, RuntimeRunView,
+                            RuntimeAnswerView, RuntimeStreamView)
 
 from .views import (
     # Auth
@@ -152,6 +154,11 @@ urlpatterns = [
 
     # Chat endpoint
     path('chat/', ChatView.as_view(), name='chat'),
+    path('chat/runtime/', RuntimeConfigView.as_view(), name='chat-runtime'),
+    path('chat/runs/', RuntimeRunListView.as_view(), name='runtime-runs'),
+    path('chat/runs/<uuid:run_id>/', RuntimeRunView.as_view(), name='runtime-run'),
+    path('chat/runs/<uuid:run_id>/events/', RuntimeStreamView.as_view(), name='runtime-events'),
+    path('chat/interactions/<uuid:interaction_id>/answer/', RuntimeAnswerView.as_view(), name='runtime-answer'),
     path('chat/usage/', ChatUsageView.as_view(), name='chat-usage'),
     path('chat/turns/<uuid:turn_id>/', ChatTurnView.as_view(), name='chat-turn'),
     path('chat/quick-replies/', ChatQuickRepliesView.as_view(), name='chat-quick-replies'),

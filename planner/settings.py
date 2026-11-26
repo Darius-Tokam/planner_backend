@@ -13,6 +13,11 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Rollout only for capable clients creating new conversations. Existing chats
+# keep their engine, including pending human interactions during a rollback.
+PLANNER_RUNTIME_DEFAULT = os.getenv('PLANNER_RUNTIME_DEFAULT', 'v2')
+PLANNER_V3_USER_IDS = os.getenv('PLANNER_V3_USER_IDS', '')
+
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # Vrai sous `manage.py test` et sous pytest. Sert a couper tout appel sortant

@@ -1407,6 +1407,16 @@ def lancer_flux(
     return lire(), futur
 
 
+def _runtime_required(request):
+    from core.models import Conversation
+    identifier = request.data.get('conversation_id')
+    if identifier and str(identifier).isdigit() and Conversation.objects.filter(
+            pk=identifier, user=request.user, engine_version='v3').exists():
+        return Response({'code': 'runtime_required',
+            'error': 'Cette conversation utilise le nouveau chat. Actualise Planner pour la continuer.'}, status=409)
+    return None
+
+
 class ChatView(APIView):
     """Chat endpoint for conversational AI."""
 
@@ -1418,6 +1428,9 @@ class ChatView(APIView):
 
     def post(self, request):
         """Send a message and get AI response."""
+        runtime = _runtime_required(request)
+        if runtime is not None:
+            return runtime
         denied = ai_consent_denied(request.user)
         if denied is not None:
             return denied
@@ -1605,6 +1618,9 @@ class ChatStreamView(APIView):
     throttle_classes = [UserRateThrottle, AnonRateThrottle, AnonymousChatThrottle]
 
     def post(self, request):
+        runtime = _runtime_required(request)
+        if runtime is not None:
+            return runtime
         denied = ai_consent_denied(request.user)
         if denied is not None:
             return denied
@@ -1782,20 +1798,24 @@ class ConversationListView(APIView):
             'id': c.pk,
             'titre': c.titre,
             'epinglee': c.epinglee,
+            'engine_version': c.engine_version,
             'updated_at': c.updated_at.isoformat(),
             'created_at': c.created_at.isoformat(),
         } for c in convs])
 
     def post(self, request):
         from core.models import Conversation
+        from services.agent_runtime.admission import default_engine
         conv = Conversation.objects.create(
             user=request.user,
             titre=str(request.data.get('titre') or "Nouvelle conversation")[:200],
+            engine_version=default_engine(request.user) if request.data.get('client_runtime') == 'v3' else 'v2',
         )
         return Response({
             'id': conv.pk,
             'titre': conv.titre,
             'epinglee': conv.epinglee,
+            'engine_version': conv.engine_version,
             'updated_at': conv.updated_at.isoformat(),
             'created_at': conv.created_at.isoformat(),
         }, status=status.HTTP_201_CREATED)
@@ -1850,7 +1870,9 @@ class ConversationMessagesView(APIView):
                 .prefetch_related('attachments')
                 .order_by('created_at')[:200])
         return Response({
-            'conversation': {'id': conv.pk, 'titre': conv.titre},
+            'conversation': {'id': conv.pk, 'titre': conv.titre, 'engine_version': conv.engine_version},
+            'active_run_id': str(active.pk) if (active := conv.agent_runs.filter(
+                status__in=['queued', 'running', 'waiting']).order_by('-created_at').first()) else None,
             'messages': [{
                 'id': m.pk,
                 'role': m.role,

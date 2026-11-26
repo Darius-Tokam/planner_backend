@@ -82,6 +82,11 @@ def _execute_call_db(run_id, call_id, name, arguments):
         return error
     with transaction.atomic():
         run = AgentRun.objects.select_for_update().select_related('user').get(pk=run_id)
+        if run.status == 'cancelled':
+            return failure('run_cancelled', 'Cette demande a été arrêtée.')
+        from core.ai_consent import has_ai_consent
+        if not has_ai_consent(run.user):
+            return failure('ai_consent_required', 'Le consentement IA a été révoqué. Aucune nouvelle action autorisée.')
         get_user_model().objects.select_for_update().get(pk=run.user_id)
         existing = run.operations.filter(tool_call_id=call_id).first()
         if existing:
@@ -119,7 +124,11 @@ def perform(run, call_id, name, args, *, approved=False, targets=None):
             AgentDelivery.objects.create(operation=operation, payload=args)
             return {'success': True, 'issue': 'effet_a_verifier', 'cause': 'delivery_pending',
                     'data': {}, 'message': 'Notification préparée; envoi non encore confirmé.'}
-        values = dict(args)
+        # JSON is the durable wire format; domain tools expect typed dates/times.
+        typed = dict(args)
+        if 'confirm' in TOOL_MAP[name].Parametres.model_fields:
+            typed['confirm'] = approved
+        values = TOOL_MAP[name].Parametres.model_validate(typed).model_dump(exclude_unset=True)
         if approved:
             values['confirm'] = True
             values['_target_ids'] = targets or {}
@@ -149,6 +158,9 @@ def resume_interaction(interaction_id):
     found = AgentInteraction.objects.get(pk=interaction_id)
     with transaction.atomic():
         run = AgentRun.objects.select_for_update().select_related('user').get(pk=found.run_id)
+        from core.ai_consent import has_ai_consent
+        if run.status == 'cancelled' or not has_ai_consent(run.user):
+            return failure('run_stopped', 'La demande ou son autorisation IA a été arrêtée.')
         get_user_model().objects.select_for_update().get(pk=run.user_id)
         interaction = AgentInteraction.objects.select_for_update().get(pk=found.pk)
         if interaction.status != 'answered':

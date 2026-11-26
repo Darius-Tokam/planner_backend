@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 
 from core.models import AgentInteraction, AgentRun, Conversation, Task
 from services.agent_runtime import store
@@ -11,6 +12,8 @@ from services.agent_runtime.tools import execute_call, resume_interaction, schem
 class RuntimeToolsTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user('tool-owner')
+        self.user.profile.ai_consent_at = timezone.now()
+        self.user.profile.save()
         self.other = get_user_model().objects.create_user('tool-other')
         self.conversation = Conversation.objects.create(user=self.user, engine_version='v3')
         self.run = AgentRun.objects.create(user=self.user, conversation=self.conversation, payload_hash='x')
@@ -22,6 +25,15 @@ class RuntimeToolsTests(TestCase):
         again = execute_call(self.run.pk, 'c1', 'create_task', {'title': 'Réviser'})
         self.assertEqual(result, again)
         self.assertEqual(Task.objects.filter(title='Réviser').count(), 1)
+
+    def test_typed_recurrence_dates_are_passed_to_domain_tool(self):
+        from datetime import timedelta
+        result = execute_call(self.run.pk, 'series', 'manage_recurrence', {
+            'action': 'create', 'kind': 'task', 'title': 'Poubelles',
+            'start_date': (timezone.localdate() + timedelta(days=1)).isoformat(),
+            'frequency': 'weekly', 'weekdays': [1], 'due_time': '20:00'})
+        self.assertTrue(result['success'], result)
+        self.assertEqual(result['receipt']['statut'], 'confirme')
 
     def test_new_request_can_create_same_title_intentionally(self):
         execute_call(self.run.pk, 'c1', 'create_task', {'title': 'Réviser'})

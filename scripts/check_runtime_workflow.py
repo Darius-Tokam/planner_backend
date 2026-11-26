@@ -18,6 +18,7 @@ django.setup()
 from dbos import DBOS, SetWorkflowID
 from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from pydantic_ai.models.function import FunctionModel, DeltaToolCall
 from pydantic_ai.messages import ToolReturnPart
 from core.models import AgentRun, AgentInvocation, Conversation, Task, AgentModelAttempt
@@ -42,6 +43,8 @@ async def execute(invocation):
 
 if __name__ == '__main__':
     user = get_user_model().objects.create_user(f'loop-proof-{uuid4().hex[:12]}')
+    user.profile.ai_consent_at = timezone.now()
+    user.profile.save()
     conv = Conversation.objects.create(user=user, engine_version='v3')
     run = AgentRun.objects.create(user=user, conversation=conv, payload_hash='proof')
     invocation = AgentInvocation.objects.create(run=run, number=0, inputs={'prompt': 'Crée une tâche DBOS full loop.'})

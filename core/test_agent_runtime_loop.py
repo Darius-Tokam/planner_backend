@@ -4,6 +4,7 @@ import json
 from asgiref.sync import async_to_sync, sync_to_async
 from django.contrib.auth import get_user_model
 from django.test import TransactionTestCase
+from django.utils import timezone
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.messages import ToolReturnPart, ModelMessagesTypeAdapter
 from pydantic_ai.tools import DeferredToolResults
@@ -18,6 +19,8 @@ from services.agent_runtime.tools import resume_interaction
 class LoopTests(TransactionTestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user('loop-owner')
+        self.user.profile.ai_consent_at = timezone.now()
+        self.user.profile.save()
         conv = Conversation.objects.create(user=self.user, engine_version='v3')
         self.run = AgentRun.objects.create(user=self.user, conversation=conv, payload_hash='x')
         self.invocation = AgentInvocation.objects.create(run=self.run, number=0)

@@ -38,6 +38,11 @@ def start_attempt(invocation_id, key, phase, provider, input_bound, max_output):
             stale.status = 'unknown'
             stale.save(update_fields=['status'])
     user = get_user_model().objects.get(pk=invocation.run.user_id)
+    from core.ai_consent import has_ai_consent
+    if not has_ai_consent(user):
+        raise PermissionError('AI consent required')
+    if invocation.run.status == 'cancelled':
+        raise InterruptedError('Run cancelled')
     trace = ouvrir_trace(user, delai=120)
     token = trace_courante.set(trace)
     try:

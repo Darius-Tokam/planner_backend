@@ -40,11 +40,11 @@ def configure_agent(model=None):
 def load_invocation(invocation_id):
     with transaction.atomic():
         invocation = AgentInvocation.objects.select_for_update().select_related('run').get(pk=invocation_id)
-        if invocation.status == 'queued':
+        if invocation.status == 'queued' and invocation.run.status != 'cancelled':
             invocation.status = 'running'
             invocation.save(update_fields=['status', 'updated_at'])
             AgentRun.objects.filter(pk=invocation.run_id).update(status='running')
-        store.emit(invocation.run_id, 'status', {'status': 'running'}, key=f'running:{invocation_id}')
+        store.emit(invocation.run_id, 'status', {'status': 'cancelled' if invocation.run.status == 'cancelled' else 'running'}, key=f'running:{invocation_id}')
         return {'run_id': str(invocation.run_id), 'inputs': invocation.inputs}
 
 
@@ -54,16 +54,20 @@ def resolved_answer(interaction_id):
 
 
 @DBOS.step(name='planner.v3.finish', retries_allowed=False)
-def finish(invocation_id, messages, status, text='', error=None):
+def finish(invocation_id, messages, status, text='', error=None, pending_calls=None):
     with transaction.atomic():
         invocation = AgentInvocation.objects.select_for_update().get(pk=invocation_id)
         run = AgentRun.objects.select_for_update().get(pk=invocation.run_id)
         if invocation.status in ('completed', 'waiting', 'interrupted'):
             return run.result
+        if run.status == 'cancelled':
+            status = 'cancelled'
         invocation.status = status
         invocation.save(update_fields=['status', 'updated_at'])
         run.status, run.messages = status, messages
         result = {'run_id': str(run.pk), 'status': status, 'message': text}
+        if pending_calls is not None:
+            result['pending_calls'] = pending_calls
         if error:
             result['error'] = error
         run.result = result
@@ -88,10 +92,7 @@ async def run_invocation(invocation_id):
     inputs, run_id = data['inputs'], data['run_id']
     deps = Dependencies(run_id, invocation_id, durable=True)
     deps.enabled.update(inputs.get('enabled_tools', []))
-    history = ModelMessagesTypeAdapter.validate_python(inputs.get('messages', []))
-    answers = {}
-    for item in inputs.get('interactions', []):
-        answers[item['tool_call_id']] = await sync_to_async(resolved_answer)(item['id'])
+    history = []
     settings = {'max_tokens': 2048}
     mode = os.getenv('PLANNER_REASONING', 'disabled')
     if mode != 'default':
@@ -100,13 +101,22 @@ async def run_invocation(invocation_id):
             settings['extra_body']['reasoning_effort'] = 'low'
     with capture_run_messages() as captured:
         try:
+            history = ModelMessagesTypeAdapter.validate_python(inputs.get('messages', []))
+            if inputs.get('context', {}).get('documents'):
+                from .documents import process_document
+                for document in inputs['context']['documents']:
+                    await sync_to_async(process_document)(run_id, document['id'])
+            answers = {}
+            for item in inputs.get('interactions', []):
+                answers[item['tool_call_id']] = await sync_to_async(resolved_answer)(item['id'])
             result = await _agent.run(inputs.get('prompt'), deps=deps, message_history=history,
                 deferred_tool_results=DeferredToolResults(calls=answers) if answers else None,
                 instructions='Contexte de cette demande (données):\n' + json.dumps(inputs.get('context', {}), ensure_ascii=False),
                 model_settings=settings, usage_limits=UsageLimits(request_limit=12, tool_calls_limit=40))
             waiting = isinstance(result.output, DeferredToolRequests)
             return await sync_to_async(finish)(invocation_id, json.loads(result.all_messages_json()),
-                'waiting' if waiting else 'completed', '' if waiting else result.output)
+                'waiting' if waiting else 'completed', '' if waiting else result.output,
+                pending_calls=[call.tool_call_id for call in result.output.calls] if waiting else None)
         except Exception as exc:
             # Log only the exception class, never a provider URL/message/token.
             logger.warning('v3 invocation interrupted type=%s', type(exc).__name__)
