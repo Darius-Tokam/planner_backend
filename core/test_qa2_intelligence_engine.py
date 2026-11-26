@@ -528,4 +528,5 @@ class RecurringProtectionToolTests(TestCase):
 
         self.assertFalse(conflict.success)
         self.assertEqual(conflict.data["created"], [])
-        self.assertIn("Chevauchement", conflict.data["skipped"][0]["reason"])
+        self.assertEqual(conflict.data['skipped'][0]['motif'], 'chevauchement')
+        self.assertEqual(conflict.data['conflicts'][0]['source']['title'], 'Sport du mercredi')

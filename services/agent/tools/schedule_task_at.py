@@ -8,7 +8,7 @@ from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from core.models import ScheduledBlock, Task
 from services.scheduling.overlap import parse_time
 from .base import ISSUE_ECHEC, ToolResult
-from .commun import DAY_NAMES, _time_to_minutes, _window_conflict
+from .commun import DAY_NAMES, _time_to_minutes, _reservation_conflict
 
 NAME = "schedule_task_at"
 DESCRIPTION = (
@@ -133,8 +133,6 @@ def execute(user: User, **kwargs) -> ToolResult:
     # minuit: c'est un même-jour clampé à 23:59, sans morceau du lendemain.
     crosses_midnight = e < s and e > 0
     main_end_t = end_t if e > s else time(23, 59)
-    main_win_end = e if e > s else 24 * 60  # le conflit du soir couvre jusqu'à minuit
-    has_main = _time_to_minutes(main_end_t) > s
 
     # Morceaux verrouillés du MÊME événement, à exclure des conflits / à
     # réconcilier. La queue overnight commence TOUJOURS à 00:00: on la cible
@@ -149,16 +147,14 @@ def execute(user: User, **kwargs) -> ToolResult:
             user=user, task=task, date=next_date, locked=True, start_time=time(0, 0),
         ).order_by("id").first()
 
-    if has_main:
-        c = _window_conflict(user, target_date, s, main_win_end,
-                             existing_main.id if existing_main is not None else None)
-        if c is not None:
-            return c
-    if crosses_midnight:
-        c = _window_conflict(user, next_date, 0, e,
-                             existing_tail.id if existing_tail is not None else None)
-        if c is not None:
-            return c
+    from services.commute import commute_parts
+    source = dict(type='requested_task', id=getattr(task, 'pk', None), title=title,
+        date=target_date.isoformat(), start_time=start_t.strftime('%H:%M'), end_time=end_t.strftime('%H:%M'))
+    c = _reservation_conflict(user, target_date, s, e if e > s else e+1440, source,
+        commute=commute_parts(task, getattr(user, 'profile', None), recurring=False),
+        exclude_ids=[b.pk for b in (existing_main, existing_tail) if b is not None])
+    if c is not None:
+        return c
 
     # Réutilise une tâche active du même titre (idempotence), sinon la crée.
     if task is None:

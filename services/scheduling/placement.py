@@ -223,78 +223,10 @@ def fixed_busy_intervals(
     *,
     exclude_scheduled_id=None,
 ) -> list[tuple[int, int]]:
-    """Return fixed hard-wall intervals for ``user`` on ``date``.
-
-    Intervals are clipped to ``[0, 1440]``, merged, and sorted. Fixed recurring
-    blocks count on their own start date, previous-day fixed overnight blocks
-    spill into the current morning, and all scheduled blocks on the date count
-    as walls. Flexible recurring blocks are intentionally excluded.
-    """
-    from core.models import ScheduledBlock
-    from services.commute import block_commute_minutes, task_commute_minutes
-
-    prev_date = date - timedelta(days=1)
-    profile = getattr(user, "profile", None)
-
-    raw: list[tuple[int, int]] = []
-
-    today_blocks = recurring_occurrences(user, date)
-    for block in today_blocks:
-        if block.is_flexible and not getattr(block, "occurrence_override", False):
-            continue
-        start = time_to_min(block.start_time)
-        end = time_to_min(block.end_time)
-        before, after = (
-            block_commute_minutes(block, profile)
-            if profile is not None and not block.is_flexible else (0, 0)
-        )
-        if is_overnight(block.start_time, block.end_time, block.is_night_shift):
-            raw.append((start - before, MINUTES_PER_DAY))
-        else:
-            raw.append((start - before, end + after))
-
-    previous_blocks = recurring_occurrences(user, prev_date)
-    for block in previous_blocks:
-        if block.is_flexible and not getattr(block, "occurrence_override", False):
-            continue
-        if is_overnight(block.start_time, block.end_time, block.is_night_shift):
-            _, after = (
-                block_commute_minutes(block, profile)
-                if profile is not None and not block.is_flexible else (0, 0)
-            )
-            raw.append((0, time_to_min(block.end_time) + after))
-
-    from django.db.models import Q
-
-    # Une tache TERMINEE ne bloque plus son creneau: cocher doit liberer la
-    # place. Vecu (2026-08-13): « une tache d'une minute dans 6 minutes »
-    # refusee parce qu'elle chevauchait une tache App Store cochee la veille,
-    # dont le placement 18:40-20:40 comptait toujours comme un mur. On exclut
-    # le placement coche (actually_completed) ET tout placement d'une tache
-    # completee par un autre chemin (les deux drapeaux sont synchronises par
-    # mark_completed, mais la ceinture ne coute qu'un OR).
-    scheduled_qs = ScheduledBlock.objects.filter(user=user, date=date).exclude(
-        Q(actually_completed=True) | Q(task__completed=True)
-    )
-    if exclude_scheduled_id is not None:
-        scheduled_qs = scheduled_qs.exclude(id=exclude_scheduled_id)
-    for block in scheduled_qs.select_related("task", "task__place"):
-        start = time_to_min(block.start_time)
-        end = time_to_min(block.end_time)
-        before, after = (
-            task_commute_minutes(block.task, profile) if profile is not None else (0, 0)
-        )
-        if end <= start:
-            raw.append((start - before, MINUTES_PER_DAY))
-        else:
-            raw.append((start - before, end + after))
-
-    clipped = [
-        clipped_interval
-        for start, end in raw
-        if (clipped_interval := _clip_interval(start, end)) is not None
-    ]
-    return _merge_intervals(clipped)
+    """Merged arithmetic projection of the explainable fixed constraints."""
+    from services.scheduling.constraints import fixed_constraints
+    return _merge_intervals([(c.start, c.end) for c in fixed_constraints(
+        user, date, exclude_scheduled_id=exclude_scheduled_id)])
 
 
 def free_gaps(
@@ -328,46 +260,12 @@ def occupied_intervals(
     *,
     exclude_scheduled_id=None,
 ) -> list[tuple[int, int]]:
-    """Return fixed walls plus placed flexible blocks within ``[day_start, day_end]``.
-
-    Le sommeil de la veille reporte apres un quart de nuit
-    (:func:`intervalles_sommeil_reporte`) compte aussi comme occupe.
-    """
-    raw = list(fixed_busy_intervals(user, date, exclude_scheduled_id=exclude_scheduled_id))
-    reporte = intervalles_sommeil_reporte(user, date)
-    raw.extend(reporte)
-
-    # La fenêtre de lecture rogne les intervalles, sans replacer les activités.
-    # Sinon un sport effectif à 06:00 se déplace à 07:00 quand on demande les
-    # disponibilités 07:00-23:00, en contradiction avec le rendu de la journée.
-    for placement in _placer_jour(user, date, reporte=reporte):
-        if placement["skipped"]:
-            continue
-        if placement.get("occurrence_override"):
-            # Déjà comptée, avec sa vraie date de début, parmi les murs.
-            continue
-
-        start = placement["start_min"]
-        end = placement["end_min"]
-        if start is None or end is None:
-            continue
-        if end <= start:
-            # Même convention que le placement et le solveur : un souple
-            # overnight protège aussi le morceau du matin de cette journée.
-            raw.append((0, end))
-            end = MINUTES_PER_DAY
-
-        clipped = _clip_interval(start, end, day_start, day_end)
-        if clipped is not None:
-            raw.append(clipped)
-
-    clipped = [
-        clipped_interval
-        for start, end in raw
-        if (clipped_interval := _clip_interval(start, end, day_start, day_end))
-        is not None
-    ]
-    return _merge_intervals(clipped)
+    """Merged projection; explanations retain each component in day_constraints."""
+    from services.scheduling.constraints import day_constraints
+    return _merge_intervals([
+        clipped for c in day_constraints(user, date, exclude_scheduled_id=exclude_scheduled_id)
+        if (clipped := _clip_interval(c.start, c.end, day_start, day_end)) is not None
+    ])
 
 
 def open_intervals(
@@ -434,10 +332,11 @@ def place_day(user, date, day_start=0, day_end=MINUTES_PER_DAY) -> list[dict]:
     return _placer_jour(user, date, day_start, day_end)
 
 
-def _placer_jour(user, date, day_start=0, day_end=MINUTES_PER_DAY, *, reporte=None) -> list[dict]:
+def _placer_jour(user, date, day_start=0, day_end=MINUTES_PER_DAY, *, reporte=None, fixed=None) -> list[dict]:
     """Corps de :func:`place_day`. ``reporte`` evite de relire la veille quand
     l'appelant (occupied_intervals) l'a deja calculee."""
-    fixed = fixed_busy_intervals(user, date)
+    if fixed is None:
+        fixed = fixed_busy_intervals(user, date)
     if reporte is None:
         reporte = intervalles_sommeil_reporte(user, date)
     taken = list(fixed) + list(reporte)

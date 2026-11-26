@@ -1,7 +1,7 @@
 """Outil restore_block_occurrence."""
 from django.contrib.auth.models import User
 
-from core.models import RecurringBlockException
+from core.models import RecurringBlockException, RecurringBlockOverride
 from . import commun
 from .base import ToolResult
 
@@ -47,9 +47,19 @@ def execute(user: User, **kwargs) -> ToolResult:
         )
 
     block = matches[0]
-    deleted, _ = RecurringBlockException.objects.filter(
-        user=user, recurring_block=block, date=target_date
-    ).delete()
+    exceptions = RecurringBlockException.objects.filter(user=user, recurring_block=block, date=target_date)
+    if exceptions.exists() and not block.is_flexible:
+        from services.commute import commute_parts
+        from services.scheduling.constraints import source_for
+        override = RecurringBlockOverride.objects.filter(user=user, recurring_block=block, date=target_date).first()
+        if override:
+            block.start_time, block.end_time = override.start_time, override.end_time
+        s, e = commun._time_to_minutes(block.start_time), commun._time_to_minutes(block.end_time)
+        conflict = commun._reservation_conflict(user, target_date, s, e if e > s else e+1440,
+            source_for(block, target_date), commute=commute_parts(block, getattr(user, 'profile', None), recurring=True))
+        if conflict:
+            return conflict
+    deleted, _ = exceptions.delete()
     if deleted:
         msg = f"'{block.title}' rétabli le {commun.DAY_NAMES[dow]} {target_date.isoformat()}."
     else:

@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.scheduling.solve_day import solve_day
+from services.scheduling.constraints import day_constraints
 from .base import (
     ISSUE_TERMINEE, ISSUE_BESOIN_PRECISION, ISSUE_ECHEC, ToolResult,
 )
@@ -112,6 +113,7 @@ def execute(user: User, **kwargs) -> ToolResult:
             "placed": placed,
             "unplaced": unplaced,
             "date": target_date.isoformat(),
+            "constraints": [c.as_dict() for c in day_constraints(user, target_date)],
         },
         message=msg,
         issue=ISSUE_TERMINEE, cause="", public=public,

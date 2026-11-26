@@ -6,6 +6,7 @@ from django.utils import timezone
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.scheduling.day_view import effective_day_entries
+from services.scheduling.constraints import fixed_constraints
 from .base import ToolResult
 from .commun import DAY_NAMES
 
@@ -70,6 +71,8 @@ def execute(user: User, **kwargs) -> ToolResult:
             "occupied_hours": round(day_minutes / 60, 1),
             "blocks": block_list,
             "detail": detail,
+            "reserved_margins": [c.as_dict() for c in fixed_constraints(user, day)
+                                 if c.kind not in ("activity", "sleep")],
         })
 
     return ToolResult(
@@ -78,6 +81,7 @@ def execute(user: User, **kwargs) -> ToolResult:
             "week_start": start.isoformat(),
             "days": days_summary,
             "total_hours": round(total_hours, 1),
+            "hours_scope": "Somme des durées des activités; les marges réservées sont détaillées séparément.",
         },
         message=f"Semaine du {start.isoformat()}: {round(total_hours, 1)}h planifiées sur 7 jours.",
     )

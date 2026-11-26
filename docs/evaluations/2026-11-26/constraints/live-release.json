@@ -1,0 +1,555 @@
+{
+  "provider": "DeepSeek",
+  "model": "deepseek-flash",
+  "transport": "authenticated_ssh_buffered",
+  "batch": "4ddec82a03",
+  "passed": 16,
+  "count": 16,
+  "results": [
+    {
+      "id": "explain_transport",
+      "iteration": 0,
+      "prompt": "Pourquoi je ne suis pas libre de 12h40 à 13h le 2026-11-27 alors que mon cours commence à 13h ?",
+      "passed": true,
+      "elapsed_s": 9.92,
+      "first": {
+        "status": "completed",
+        "text": "Parce qu'il y a un transport réservé de 12h40 à 13h, juste avant ton cours.\n\nDétails :\n- **Transport (aller)** : 12h40 à 13h, rattaché au cours **Conception d'applications** (13h à 15h). C'est une marge de déplacement calculée selon ton profil de transport, non déplaçable.\n- **Cours** : 13h à 15h.\n- Puis un transport retour de 15h à 15h20, et **Révision examen** de 15h20 à 16h20.\n\nDonc ta plage libre réelle s'arrête à 12h40 : le créneau libre du matin est de 7h à 12h40, et le suivant reprend à 16h20 jusqu'à 23h.",
+        "tools": [
+          "get_today_schedule"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 19572
+      },
+      "final": null
+    },
+    {
+      "id": "conflict_resume",
+      "iteration": 0,
+      "prompt": "Planifie Marché de Noël le 2026-11-27 de 11h40 à 13h.",
+      "passed": true,
+      "elapsed_s": 16.53,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "schedule_task_at"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "e5ead2e3-4a19-4eea-b409-f77b7acc0c82",
+            "kind": "form",
+            "question": {
+              "kind": "form",
+              "fields": [
+                {
+                  "id": "plage",
+                  "type": "time_range",
+                  "label": "Nouvelle plage horaire (début et fin)",
+                  "required": true
+                }
+              ],
+              "question": "Le créneau 11h40 à 13h tombe sur le transport (12h40 à 13h) avant ton cours « Conception d'applications » (13h à 15h). Aucun changement fait. Quelle heure veux-tu pour le Marché de Noël le 2026-11-27 ? Je vais la vérifier avant de créer la tâche."
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 15348
+      },
+      "final": {
+        "status": "completed",
+        "text": "C'est fait : le Marché de Noël est placé le vendredi 27 novembre 2026, de 11h40 à 12h40. Le cours « Conception d'applications » (13h à 15h) et son transport de 12h40 à 13h restent intacts.",
+        "tools": [
+          "schedule_task_at",
+          "schedule_task_at"
+        ],
+        "effects": [
+          "schedule_task_at"
+        ],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [
+          "confirme"
+        ],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [
+          {
+            "start_time": "11:40:00",
+            "end_time": "12:40:00",
+            "task__title": "Marché de Noël"
+          }
+        ],
+        "calls": 4,
+        "tokens": 36509
+      }
+    },
+    {
+      "id": "touching_allowed",
+      "iteration": 0,
+      "prompt": "Planifie Sortie le 2026-11-27 de 11h40 à 13h.",
+      "passed": true,
+      "elapsed_s": 6.64,
+      "first": {
+        "status": "completed",
+        "text": "C'est fait : « Sortie » est réservé le vendredi 27 novembre 2026 de 11 h 40 à 13 h, sans conflit. Le reçu confirme l'écriture.",
+        "tools": [
+          "schedule_task_at"
+        ],
+        "effects": [
+          "schedule_task_at"
+        ],
+        "failures": [],
+        "receipts": [
+          "confirme"
+        ],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [
+          {
+            "start_time": "11:40:00",
+            "end_time": "13:00:00",
+            "task__title": "Sortie"
+          }
+        ],
+        "calls": 2,
+        "tokens": 19189
+      },
+      "final": null
+    },
+    {
+      "id": "recurring_conflict",
+      "iteration": 0,
+      "prompt": "Crée Travail fixe chaque vendredi de 11h40 à 13h à partir du 2026-11-27.",
+      "passed": true,
+      "elapsed_s": 14.8,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "create_block",
+          "find_free_slots"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "e1987948-e530-4059-b8d6-f4ef7a5c125c",
+            "kind": "text",
+            "question": {
+              "kind": "text",
+              "question": "Le bloc « Travail » de 11h40 à 13h est refusé : le transport vers le cours « Conception d'applications » (13h à 15h) occupe 12h40 à 13h, et le retour de 13h à 13h20 déborde sur le cours. Quelle autre heure veux-tu? Exemple non réservé : 8h à 9h20 tient dans la plage libre du vendredi."
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 4,
+        "tokens": 31134
+      },
+      "final": null
+    },
+    {
+      "id": "correction",
+      "iteration": 0,
+      "prompt": "Non, je n'ai pas d'examen de conception. C'est un cours. Corrige ton explication.",
+      "passed": true,
+      "elapsed_s": 7.22,
+      "first": {
+        "status": "completed",
+        "text": "T'as raison, je me suis trompé: c'est bien un cours, pas un examen. Voici ta journée du vendredi 27 novembre:\n\n- **Conception d'applications** (cours), de 13h à 15h, avec transport de 12h40 à 13h avant et de 15h à 15h20 après.\n- **Révision examen** (tâche planifiée), de 15h20 à 16h20.\n\nCréneaux libres: 7h à 12h40, puis 16h20 à 23h.",
+        "tools": [
+          "get_today_schedule"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 19573
+      },
+      "final": null
+    },
+    {
+      "id": "detect_transport",
+      "iteration": 0,
+      "prompt": "Vérifie les conflits du 2026-11-27 et explique précisément leur cause.",
+      "passed": true,
+      "elapsed_s": 11.75,
+      "first": {
+        "status": "completed",
+        "text": "Un seul conflit le vendredi 27 novembre 2026.\n\n**Ce qui se passe**\n- « Conception d'applications » (cours récurrent) : 13:00 à 15:00.\n- Cette activité génère un transport obligatoire **avant** elle, de 12:40 à 13:00 (politique de transport de ton profil, non déplaçable).\n- « Sortie existante » (tâche planifiée) occupe 12:45 à 13:00.\n\n**La cause exacte**\nLe chevauchement de 15 minutes est entre contraintes : le transport pré-cours (12:40-13:00), dont la source est le cours « Conception d'applications », chevauche l'activité « Sortie existante » (12:45-13:00). Les deux contraintes sont marquées non déplaçables, donc ce n'est pas un conflit entre deux activités qui se touchent, c'est le trajet réservé pour le cours qui tombe dans le temps de la sortie.\n\n**Ce qu'il faut savoir**\nLe transport est une marge réservée, pas une activité de plus, et le cours lui-même n'est pas déplacé. La sortie se termine à 13:00, soit exactement au début du cours, ce qui ne laisse aucun espace pour le trajet de 20 minutes.\n\nJe n'ai pas modifié l'horaire. Si tu veux résoudre ça, il faut choisir : déplacer la sortie, ou arriver autrement au cours. Dis-moi lequel et je vérifie les créneaux avant de proposer des heures précises.",
+        "tools": [
+          "detect_conflicts"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 3,
+        "tokens": 29685
+      },
+      "final": null
+    },
+    {
+      "id": "alternate_conflict",
+      "iteration": 0,
+      "prompt": "Réserve Dentiste le 2026-11-27 de 15h à 15h15.",
+      "passed": true,
+      "elapsed_s": 7.11,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "schedule_task_at"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "a03db060-c38a-47e4-aebf-596f71e19a9f",
+            "kind": "text",
+            "question": {
+              "kind": "text",
+              "question": "Le 27 novembre à 15h, ton cours « Conception d'applications » (13h à 15h) est suivi d'un transport (15h à 15h20) que je ne peux pas déplacer, donc le dentiste de 15h à 15h15 entre en conflit. À quelle heure veux-tu le mettre? (Je vérifierai la disponibilité avant de réserver.)"
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 15284
+      },
+      "final": null
+    },
+    {
+      "id": "social",
+      "iteration": 0,
+      "prompt": "Merci, et toi comment tu vas ?",
+      "passed": true,
+      "elapsed_s": 3.03,
+      "first": {
+        "status": "completed",
+        "text": "Ça va bien, merci de demander ! Prêt à t'aider avec ton planning quand tu veux.",
+        "tools": [],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 1,
+        "tokens": 9323
+      },
+      "final": null
+    },
+    {
+      "id": "explain_transport",
+      "iteration": 1,
+      "prompt": "Pourquoi je ne suis pas libre de 12h40 à 13h le 2026-11-27 alors que mon cours commence à 13h ?",
+      "passed": true,
+      "elapsed_s": 8.14,
+      "first": {
+        "status": "completed",
+        "text": "Tu n'es pas libre de 12h40 à 13h parce qu'un **transport** est réservé juste avant ton cours.\n\nDétails du vendredi 2026-11-27 :\n- **12h40 à 13h00** : transport (marge de déplacement), direction « avant », rattaché à ton cours **Conception d'applications**, selon ta politique de transport de profil. Non déplaçable, et ce n'est pas un cours ni une activité en soi.\n- **13h00 à 15h00** : cours **Conception d'applications**.\n\nTon dernier créneau libre avant le cours se termine donc à 12h40, et le suivant commence à 16h20 (après un transport de 15h à 15h20 et une **Révision examen** de 15h20 à 16h20).",
+        "tools": [
+          "get_today_schedule"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 19583
+      },
+      "final": null
+    },
+    {
+      "id": "conflict_resume",
+      "iteration": 1,
+      "prompt": "Planifie Marché de Noël le 2026-11-27 de 11h40 à 13h.",
+      "passed": true,
+      "elapsed_s": 17.61,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "schedule_task_at",
+          "find_free_slots"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "19cef3a4-9f0a-4784-9c70-2595f29e888e",
+            "kind": "choice",
+            "question": {
+              "kind": "choice",
+              "options": [
+                {
+                  "id": "avant_cours",
+                  "label": "Le même jour, 11h à 12h40 (1h40)"
+                },
+                {
+                  "id": "apres_cours",
+                  "label": "Le même jour, 16h20 à 17h40"
+                },
+                {
+                  "id": "autre",
+                  "label": "Un autre moment (je précise l'heure)"
+                }
+              ],
+              "question": "Le 27 novembre, 11h40 à 13h ne passe pas : le transport vers « Conception d'applications » (13h-15h) occupe 12h40 à 13h. Rien n'a été modifié. Quel horaire pour le Marché de Noël?"
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 3,
+        "tokens": 21783
+      },
+      "final": {
+        "status": "completed",
+        "text": "C'est réglé : **Marché de Noël** le vendredi 27 novembre de 11h40 à 12h40 (reçu confirmé). Ton cours « Conception d'applications » à 13h et son transport de 12h40 à 13h restent intacts.",
+        "tools": [
+          "schedule_task_at",
+          "find_free_slots",
+          "schedule_task_at"
+        ],
+        "effects": [
+          "schedule_task_at"
+        ],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [
+          "confirme"
+        ],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [
+          {
+            "start_time": "11:40:00",
+            "end_time": "12:40:00",
+            "task__title": "Marché de Noël"
+          }
+        ],
+        "calls": 5,
+        "tokens": 44191
+      }
+    },
+    {
+      "id": "touching_allowed",
+      "iteration": 1,
+      "prompt": "Planifie Sortie le 2026-11-27 de 11h40 à 13h.",
+      "passed": true,
+      "elapsed_s": 7.2,
+      "first": {
+        "status": "completed",
+        "text": "C'est fait : « Sortie » est planifiée le vendredi 27 novembre 2026 de 11 h 40 à 13 h, et le reçu confirme le créneau sans conflit.",
+        "tools": [
+          "schedule_task_at"
+        ],
+        "effects": [
+          "schedule_task_at"
+        ],
+        "failures": [],
+        "receipts": [
+          "confirme"
+        ],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [
+          {
+            "start_time": "11:40:00",
+            "end_time": "13:00:00",
+            "task__title": "Sortie"
+          }
+        ],
+        "calls": 2,
+        "tokens": 19186
+      },
+      "final": null
+    },
+    {
+      "id": "recurring_conflict",
+      "iteration": 1,
+      "prompt": "Crée Travail fixe chaque vendredi de 11h40 à 13h à partir du 2026-11-27.",
+      "passed": true,
+      "elapsed_s": 11.09,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "find_free_slots",
+          "create_block"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "7191012f-8c84-4947-86b0-c9b9014457fc",
+            "kind": "choice",
+            "question": {
+              "kind": "choice",
+              "options": [
+                {
+                  "id": "le_mat_1110_1230",
+                  "label": "Vendredi 11h10 à 12h30 (marge avant le cours respectée)"
+                },
+                {
+                  "id": "pm_1640_1800",
+                  "label": "Vendredi 16h40 à 18h00 (après la révision de 15h20 à 16h20)"
+                },
+                {
+                  "id": "autre",
+                  "label": "Un autre horaire, je te le donne"
+                }
+              ],
+              "question": "Le vendredi 11h40 à 13h entre en conflit avec « Conception d'applications » (13h à 15h) : ça prend 20 min de transport avant le cours (12h40 à 13h) et 20 min après ton bloc (13h à 13h20). Rien n'a été créé. Quel horaire veux-tu pour « Travail fixe » le vendredi ?"
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 3,
+        "tokens": 23573
+      },
+      "final": null
+    },
+    {
+      "id": "correction",
+      "iteration": 1,
+      "prompt": "Non, je n'ai pas d'examen de conception. C'est un cours. Corrige ton explication.",
+      "passed": true,
+      "elapsed_s": 7.47,
+      "first": {
+        "status": "completed",
+        "text": "T'as raison, je corrige: Conception d'applications est un cours récurrent, pas un examen.\n\nTon vendredi 27 novembre 2026:\n\n- Transport vers le cours: 12h40 à 13h00\n- Cours Conception d'applications: 13h00 à 15h00\n- Transport après le cours: 15h00 à 15h20\n- Révision examen: 15h20 à 16h20 (tâche planifiée, pas terminée)\n\nCréneaux libres: 7h00 à 12h40 et 16h20 à 23h00.",
+        "tools": [
+          "get_today_schedule"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 2,
+        "tokens": 19561
+      },
+      "final": null
+    },
+    {
+      "id": "detect_transport",
+      "iteration": 1,
+      "prompt": "Vérifie les conflits du 2026-11-27 et explique précisément leur cause.",
+      "passed": true,
+      "elapsed_s": 13.72,
+      "first": {
+        "status": "completed",
+        "text": "Un seul conflit le vendredi 27 novembre 2026.\n\n**Ce qui se passe**\n- « Conception d'applications », cours récurrent, 13:00 à 15:00.\n- « Sortie existante », tâche planifiée ce jour-là, 12:45 à 13:00.\n\n**La cause exacte**\nLe conflit ne vient pas du cours comme tel ni d'un chevauchement entre deux activités. Il vient d'une **marge de transport** de 20 minutes (12:40 à 13:00) rattachée au cours par la politique de ton profil de transport, qui doit se placer **avant** le cours. Cette marge chevauche l'activité « Sortie existante » sur 12:45 à 13:00, donc 15 minutes.\n\nDeux contraintes sont en jeu, chacune non déplaçable (`movable: false`) :\n- la contrainte de type **transport** 12:40-13:00, dont l'élément source est le cours « Conception d'applications » (13:00-15:00);\n- la contrainte de type **activité** 12:45-13:00, dont l'élément source est la tâche « Sortie existante ».\n\nIl faut noter que ces 20 minutes sont une marge réservée, pas un transport effectif déjà inscrit, et pas un cours déplacé.\n\n**Ce que ça implique**\nLa tâche doit se terminer à 12:40 au plus tard, ou bien le cours doit bouger, ou bien il faut accepter de rogner sur cette marge de trajet. Ce choix te revient : veux-tu que je regarde les créneaux libres de la journée pour déplacer « Sortie existante »?",
+        "tools": [
+          "detect_conflicts"
+        ],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 3,
+        "tokens": 29744
+      },
+      "final": null
+    },
+    {
+      "id": "alternate_conflict",
+      "iteration": 1,
+      "prompt": "Réserve Dentiste le 2026-11-27 de 15h à 15h15.",
+      "passed": true,
+      "elapsed_s": 10.05,
+      "first": {
+        "status": "waiting",
+        "text": "",
+        "tools": [
+          "find_free_slots",
+          "schedule_task_at"
+        ],
+        "effects": [],
+        "failures": [
+          "planning_conflict"
+        ],
+        "receipts": [],
+        "questions": [
+          {
+            "id": "99714681-3652-4ed2-a43c-c6550c7039f6",
+            "kind": "text",
+            "question": {
+              "kind": "text",
+              "question": "Le 27 novembre de 15h à 15h15 ne passe pas : c'est le transport (15h00-15h20) après ton cours « Conception d'applications » (13h-15h). Aussi, « Révision examen » occupe 15h20-16h20. Les plages libres de la journée sont 7h-12h40 et 16h20-23h. Quelle heure veux-tu pour le dentiste (15 min) ?"
+            }
+          }
+        ],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 3,
+        "tokens": 21679
+      },
+      "final": null
+    },
+    {
+      "id": "social",
+      "iteration": 1,
+      "prompt": "Merci, et toi comment tu vas ?",
+      "passed": true,
+      "elapsed_s": 3.38,
+      "first": {
+        "status": "completed",
+        "text": "Ça va bien, merci de demander ! Je suis prêt à donner un coup de main sur ton planning quand tu veux. Qu'est-ce qu'on regarde ?",
+        "tools": [],
+        "effects": [],
+        "failures": [],
+        "receipts": [],
+        "questions": [],
+        "course_present": true,
+        "created_slots": [],
+        "calls": 1,
+        "tokens": 9335
+      },
+      "final": null
+    }
+  ]
+}

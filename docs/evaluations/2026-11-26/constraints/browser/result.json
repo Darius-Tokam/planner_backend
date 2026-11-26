@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "provider": "DeepSeek",
+  "terminal": true,
+  "sameConversationAfterReload": true,
+  "viewport": [
+    390,
+    844
+  ],
+  "extraRequired": 0,
+  "answerMode": "free",
+  "requests": [
+    "/api/chat/runs/",
+    "/api/chat/interactions/668d28e2-4427-45b6-b694-00e41cca4baa/answer/",
+    "/api/chat/runs/"
+  ],
+  "errors": []
+}

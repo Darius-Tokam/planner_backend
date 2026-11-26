@@ -331,63 +331,9 @@ class AIScheduler:
         Returns:
             list: liste de tuples (start_time, end_time) avec end > start.
         """
-        day_of_week = current_date.weekday()
-        prev_day = (day_of_week - 1) % 7
-        profile = user.profile
-        skipped_today = skipped_block_ids(user, current_date)
-        skipped_prev = skipped_block_ids(user, current_date - timedelta(days=1))
-
-        blocked = []  # (start_min, end_min) bornés à [0, 1440]
-
-        def add(s: int, e: int):
-            s = max(0, s)
-            e = min(MINUTES_PER_DAY, e)
-            if e > s:
-                blocked.append((s, e))
-
-        def to_min(t: time) -> int:
-            return t.hour * 60 + t.minute
-
-        # Blocs récurrents du jour courant. La fenêtre d'indisponibilité AVANT
-        # un bloc rattaché à un lieu suit la formule de la spec (préparation +
-        # trajet + marge de sécurité -> "début_indisponibilité"), et le retour
-        # bloque `trajet` minutes APRÈS. Sans lieu: buffer transport plat (legacy).
-        from services.commute import block_commute_minutes
-
-        for b in RecurringBlock.objects.filter(
-            user=user, day_of_week=day_of_week, active=True
-        ).exclude(id__in=skipped_today).select_related('place'):
-            before, after = block_commute_minutes(b, profile)
-            s, e = to_min(b.start_time), to_min(b.end_time)
-            if b.is_night_shift or e <= s:
-                add(s - before, MINUTES_PER_DAY)  # part du jour J
-            else:
-                add(s - before, e + after)
-
-        # Portion matinale d'un bloc de nuit commencé la VEILLE (le retour
-        # bloque `trajet` minutes après la fin du shift)
-        for b in RecurringBlock.objects.filter(
-            user=user, day_of_week=prev_day, active=True
-        ).exclude(id__in=skipped_prev).select_related('place'):
-            _, after = block_commute_minutes(b, profile)
-            s, e = to_min(b.start_time), to_min(b.end_time)
-            if b.is_night_shift or e <= s:
-                add(0, e + after)
-
-        # Blocs DÉJÀ planifiés à cette date -> ne jamais empiler dessus
-        from services.commute import task_commute_minutes
-
-        for sb in ScheduledBlock.objects.filter(
-            user=user, date=current_date
-        ).select_related('task', 'task__place'):
-            before, after = task_commute_minutes(sb.task, profile)
-            s, e = to_min(sb.start_time), to_min(sb.end_time)
-            if e <= s:
-                add(s - before, MINUTES_PER_DAY)
-            else:
-                add(s - before, e + after)
-
-        return [(self._min_to_time(s), self._min_to_time(e)) for s, e in blocked]
+        from services.scheduling.placement import occupied_intervals
+        return [(self._min_to_time(s), self._min_to_time(e))
+                for s, e in occupied_intervals(user, current_date)]
 
     def _find_free_slots(
         self,

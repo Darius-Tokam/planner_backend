@@ -10,7 +10,7 @@ facilement testable.
 """
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Iterable
 
 MINUTES_PER_DAY = 1440
@@ -86,8 +86,9 @@ def find_recurring_conflicts(
     exclude_id=None,
     *,
     new_is_flexible: bool = False,
+    start_date=None, end_date=None,
 ):
-    """Retourne les RecurringBlock actifs en chevauchement avec le bloc proposé.
+    """Retourne les sources en conflit (titre, heures, planning_conflicts).
 
     `start`/`end` peuvent être des time ou des chaînes 'HH:MM'. Gère l'overnight
     et le débordement sur le jour adjacent (donc on inspecte J-1, J, J+1).
@@ -95,7 +96,7 @@ def find_recurring_conflicts(
     if new_is_flexible:
         return []
 
-    from core.models import RecurringBlock
+    from core.models import RecurringBlock, RecurringBlockException, RecurringBlockOverride, ScheduledBlock
 
     start_t = parse_time(start)
     end_t = parse_time(end)
@@ -114,7 +115,7 @@ def find_recurring_conflicts(
     from django.utils import timezone as _tz
     qs = RecurringBlock.objects.filter(
         # un bloc dont la fenetre est terminee ne bloque plus les nouveaux
-        Q(end_date__isnull=True) | Q(end_date__gte=_tz.localdate()),
+        Q(end_date__isnull=True) | Q(end_date__gte=_tz.localdate()-timedelta(days=1)),
         user=user,
         active=True,
         day_of_week__in=candidate_days,
@@ -123,11 +124,115 @@ def find_recurring_conflicts(
     if exclude_id is not None:
         qs = qs.exclude(id=exclude_id)
 
+    from services.scheduling.constraints import components, on_day, source_for
+    from services.commute import commute_parts
+    from types import SimpleNamespace
+    profile = getattr(user, 'profile', None)
+    proposal = RecurringBlock.objects.filter(user=user, pk=exclude_id).select_related('place').first() if exclude_id else None
+    proposal = proposal or SimpleNamespace(place=None)
+    base = day_of_week * MINUTES_PER_DAY
+    ns, ne = base + time_to_min(start_t), base + time_to_min(end_t)
+    if night:
+        ne += MINUTES_PER_DAY
+    proposed_source = {'type': 'requested_recurring', 'id': exclude_id,
+        'title': 'Créneau demandé', 'day_of_week': day_of_week,
+        'start_time': start_t.strftime('%H:%M'), 'end_time': end_t.strftime('%H:%M')}
+    requested = components(ns, ne, proposed_source, **commute_parts(proposal, profile, recurring=True))
     conflicts = []
-    for b in qs:
-        b_iv = recurring_intervals(
-            b.day_of_week, b.start_time, b.end_time, b.is_night_shift
-        )
-        if intervals_conflict(new_iv, b_iv):
+    # Exceptions and overrides are finite; inspect the first actual ordinary
+    # occurrence, then check dated overrides separately below.
+    exceptional = {}
+    for model in (RecurringBlockException, RecurringBlockOverride):
+        for block_id, exceptional_date in model.objects.filter(user=user).values_list('recurring_block_id', 'date'):
+            exceptional.setdefault(block_id, set()).add(exceptional_date)
+    for b in qs.select_related('place'):
+        bs = b.day_of_week * MINUTES_PER_DAY + time_to_min(b.start_time)
+        be = b.day_of_week * MINUTES_PER_DAY + time_to_min(b.end_time)
+        if is_overnight(b.start_time, b.end_time, b.is_night_shift):
+            be += MINUTES_PER_DAY
+        source = {'type': 'recurring', 'id': b.pk, 'title': b.title,
+                  'day_of_week': b.day_of_week, 'start_time': b.start_time.strftime('%H:%M'),
+                  'end_time': b.end_time.strftime('%H:%M'), 'block_type': b.block_type}
+        details = []
+        for shift in (-MINUTES_PER_WEEK, 0, MINUTES_PER_WEEK):
+            day_delta = (b.day_of_week * MINUTES_PER_DAY + shift - base) // MINUTES_PER_DAY
+            lower = max(start_date or _tz.localdate(), _tz.localdate(),
+                        b.start_date - timedelta(days=day_delta) if b.start_date else _tz.localdate())
+            uppers = [d for d in (end_date, b.end_date - timedelta(days=day_delta) if b.end_date else None) if d is not None]
+            upper = min(uppers) if uppers else None
+            witness = lower + timedelta(days=(day_of_week - lower.weekday()) % 7)
+            while (witness in exceptional.get(exclude_id, set())
+                   or witness + timedelta(days=day_delta) in exceptional.get(b.pk, set())):
+                witness += timedelta(days=7)
+            if upper is not None and witness > upper:
+                continue
+            existing = components(bs + shift, be + shift, source, **commute_parts(b, profile, recurring=True))
+            for left in requested:
+                for right in existing:
+                    if not right.overlaps(left.start, left.end):
+                        continue
+                    overlap_start, overlap_end = max(left.start, right.start), min(left.end, right.end)
+                    chosen = right if right.kind != 'activity' or left.kind == 'activity' else left
+                    day_offset = overlap_start // MINUTES_PER_DAY
+                    for piece in on_day([chosen], -day_offset * MINUTES_PER_DAY):
+                        detail = piece.as_dict((overlap_start - day_offset * MINUTES_PER_DAY,
+                                                overlap_end - day_offset * MINUTES_PER_DAY))
+                        detail.update(day_of_week=day_offset % 7, scope='weekly_templates',
+                                      first_conflict_date=(witness + timedelta(days=day_offset-day_of_week)).isoformat(),
+                                      with_source=source, requested_kind=left.kind, existing_kind=right.kind)
+                        details.append(detail)
+        if details:
+            b.planning_conflicts = details
             conflicts.append(b)
+    # Dated reservations cannot disappear behind a recurring-only validator.
+    lower = max(start_date or _tz.localdate(), _tz.localdate())
+    scheduled = ScheduledBlock.objects.filter(user=user, date__gte=lower-timedelta(days=1)).exclude(
+        Q(actually_completed=True) | Q(task__completed=True))
+    overrides = RecurringBlockOverride.objects.filter(user=user, recurring_block__user=user,
+        recurring_block__active=True, date__gte=lower-timedelta(days=1)).exclude(recurring_block_id=exclude_id)
+    if end_date:
+        scheduled = scheduled.filter(date__lte=end_date+timedelta(days=1))
+        overrides = overrides.filter(date__lte=end_date+timedelta(days=1))
+    dated = [(b.date, b, b.task, True) for b in scheduled.select_related('task__place')]
+    skipped = set(RecurringBlockException.objects.filter(user=user).values_list('recurring_block_id','date'))
+    for override in overrides.select_related('recurring_block__place'):
+        b = override.recurring_block
+        if ((b.pk, override.date) in skipped or b.day_of_week != override.date.weekday()
+            or b.start_date and override.date < b.start_date or b.end_date and override.date > b.end_date):
+            continue
+        b.start_time, b.end_time = override.start_time, override.end_time
+        dated.append((override.date, b, b, False))
+    for occupied_date, b, owner, is_task in dated:
+        for delta in (-1, 0, 1):
+            candidate_date = occupied_date + timedelta(days=delta)
+            if (candidate_date.weekday() != day_of_week or candidate_date < lower
+                or end_date and candidate_date > end_date
+                or candidate_date in exceptional.get(exclude_id, set())):
+                continue
+            offset = -delta * MINUTES_PER_DAY
+            s, e = time_to_min(b.start_time), time_to_min(b.end_time)
+            if e <= s:
+                e += MINUTES_PER_DAY
+            source = source_for(b, occupied_date, scheduled=is_task)
+            existing = components(s+offset, e+offset, source,
+                **commute_parts(owner, profile, recurring=not is_task))
+            details = []
+            for left in requested:
+                left = type(left)(left.start-base, left.end-base, left.kind, left.source, left.policy, left.direction)
+                for right in existing:
+                    if not right.overlaps(left.start, left.end):
+                        continue
+                    overlap_start, overlap_end = max(left.start,right.start), min(left.end,right.end)
+                    chosen = right if right.kind != 'activity' or left.kind == 'activity' else left
+                    for day_delta in range(overlap_start // MINUTES_PER_DAY, (overlap_end-1) // MINUTES_PER_DAY+1):
+                        for piece in on_day([chosen], -day_delta*MINUTES_PER_DAY):
+                            detail = piece.as_dict((max(0,overlap_start-day_delta*MINUTES_PER_DAY),
+                                                    min(MINUTES_PER_DAY,overlap_end-day_delta*MINUTES_PER_DAY)))
+                            detail.update(date=(candidate_date+timedelta(days=day_delta)).isoformat(),
+                                scope='dated_reservation', with_source=source,
+                                requested_kind=left.kind, existing_kind=right.kind)
+                            details.append(detail)
+            if details:
+                conflicts.append(SimpleNamespace(title=source['title'], start_time=b.start_time,
+                    end_time=b.end_time, planning_conflicts=details))
     return conflicts

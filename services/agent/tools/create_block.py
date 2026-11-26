@@ -11,6 +11,7 @@ from services.scheduling.overlap import (
 )
 from . import commun
 from .base import ToolResult
+from services.scheduling.constraints import describe_data
 
 NAME = "create_block"
 DESCRIPTION = "Crée un ou plusieurs blocs récurrents HEBDOMADAIRES (une habitude qui revient chaque semaine: cours, travail, sport, sommeil...). Jours = liste (ex: [0,1,2,3,4] = lundi à vendredi); un bloc séparé par jour. Appelle-le quand l'utilisateur décrit un horaire qui revient (mot de récurrence dit, ou un cours, un quart) avec ses jours, son début et sa fin. Un jour nommé sans mot de récurrence (« chaque », « tous les », « les lundis ») désigne un seul jour: c'est un événement unique -> schedule_task_at. Activité souple sans heure (sport, étude): choisis un créneau libre. Pour un rendez-vous, un cours, un quart, une réunion ou une leçon fixé par quelqu'un d'autre sans heure de début ou de fin: n'appelle pas cet outil, demande-lui (present_form ou present_choices). N'utilise JAMAIS create_block pour un événement unique daté ('ce samedi', une date précise) -> schedule_task_at. Gère un quart de nuit récurrent qui traverse minuit (ex: travail 22:00-06:00 chaque lundi): mets start_time/end_time tels quels, le passage de minuit est détecté automatiquement. Les conflits sont détectés et renvoyés automatiquement."
@@ -167,15 +168,16 @@ def execute(user: User, **kwargs) -> ToolResult:
                     start_t,
                     end_t,
                     is_night_shift,
-                    new_is_flexible=nf,
+                    new_is_flexible=nf, start_date=bounds.get("start_date"), end_date=bounds.get("end_date"),
                 )
                 if conflicts:
                     overlap = conflicts[0]
                     skipped.append({
                         "day": day,
                         "day_name": commun.DAY_NAMES[day],
-                        "reason": f"Chevauchement avec '{overlap.title}' ({overlap.start_time.strftime('%H:%M')}-{overlap.end_time.strftime('%H:%M')})",
+                        "reason": 'Contraintes en conflit : ' + '; '.join(describe_data(d) for b in conflicts for d in b.planning_conflicts),
                         "motif": "chevauchement",
+                        "conflicts": [d for b in conflicts for d in b.planning_conflicts],
                         "titre": title,
                         "debut": debut_hhmm,
                         "fin": fin_hhmm,
@@ -217,12 +219,26 @@ def execute(user: User, **kwargs) -> ToolResult:
     if skipped:
         msg += f". {len(skipped)} sauté(s): " + "; ".join(s.get("reason", "") for s in skipped)
 
+    from services.commute import commute_parts
+    margins = commute_parts(None, getattr(user, 'profile', None), recurring=True) if not nf else {}
+    before = margins.get('travel', 0) + margins.get('prep', 0) + margins.get('margin', 0)
+    after = margins.get('travel', 0)
+    if any(s.get('conflicts') for s in skipped):
+        msg += (f'. Le nouveau bloc réserve aussi {before} min avant et {after} min après. '
+                'Pour proposer une autre heure, lis find_free_slots avec reservation_type=recurring. '
+                'Une fin à la frontière occupée ne suffit pas si le retour du nouveau bloc déborde.')
+
     return ToolResult(
         success=len(created) > 0,
-        data={"created": created, "skipped": skipped},
+        cause='planning_conflict' if not created and any(s.get('conflicts') for s in skipped) else '',
+        data={"created": created, "skipped": skipped,
+              "alternatives_need_validation": bool(skipped),
+              "requires_user_decision": any(s.get('conflicts') for s in skipped),
+              "requested_reservation": {"before_minutes": before, "after_minutes": after},
+              "conflicts": [d for item in skipped for d in item.get("conflicts", [])]},
         message=msg,
         # Ne rend que si rien n'a ete cree ni saute (aucun jour valide) :
         # les sauts passent par la branche dediee du rendu.
-        public=("Je n'ai pas créé le créneau : aucun jour valide. "
+        public=msg if skipped else ("Je n'ai pas créé le créneau : aucun jour valide. "
                 "Utilise des noms de jour, par exemple lundi."),
     )

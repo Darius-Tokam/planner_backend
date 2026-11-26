@@ -58,34 +58,26 @@ def commute_window(
     )
 
 
-def block_commute_minutes(block, profile) -> tuple:
-    """(before_minutes, after_minutes) of unavailability around a RecurringBlock.
-
-    - Block tied to a UserPlace with a travel time -> spec formula:
-      before = prep + travel + margin, after = travel (return trip).
-    - No place -> legacy flat transport buffer (profile.transport_time_minutes)
-      on both sides, preserving pre-Phase-1 behaviour.
-    """
-    place = getattr(block, 'place', None)
+def commute_parts(item, profile, *, recurring: bool) -> dict:
+    """The same policy feeds interval arithmetic and the public explanation."""
+    place = getattr(item, 'place', None)
     travel = getattr(place, 'travel_minutes', 0) or 0
     if travel > 0:
-        prep = getattr(profile, 'prep_time_minutes', 0) or 0
-        margin = getattr(profile, 'safety_margin_minutes', 0) or 0
-        return prep + travel + margin, travel
-    flat = getattr(profile, 'transport_time_minutes', 0) or 0
-    return flat, flat
+        return dict(travel=travel, prep=getattr(profile, 'prep_time_minutes', 0) or 0,
+                    margin=getattr(profile, 'safety_margin_minutes', 0) or 0, policy='place')
+    if recurring:
+        return dict(travel=getattr(profile, 'transport_time_minutes', 0) or 0, policy='profile_transport')
+    return {}
+
+
+
+def block_commute_minutes(block, profile) -> tuple:
+    parts = commute_parts(block, profile, recurring=True)
+    travel = parts.get('travel', 0)
+    return travel + parts.get('prep', 0) + parts.get('margin', 0), travel
 
 
 def task_commute_minutes(task, profile) -> tuple:
-    """(before_minutes, after_minutes) around a scheduled task's place.
-
-    Scheduled tasks only reserve commute/prep time when they are tied to a
-    concrete UserPlace. Without a place, there is no safe way to infer a trip.
-    """
-    place = getattr(task, 'place', None)
-    travel = getattr(place, 'travel_minutes', 0) or 0
-    if travel <= 0:
-        return 0, 0
-    prep = getattr(profile, 'prep_time_minutes', 0) or 0
-    margin = getattr(profile, 'safety_margin_minutes', 0) or 0
-    return prep + travel + margin, travel
+    parts = commute_parts(task, profile, recurring=False)
+    travel = parts.get('travel', 0)
+    return travel + parts.get('prep', 0) + parts.get('margin', 0), travel
