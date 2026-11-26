@@ -960,6 +960,8 @@ class Conversation(models.Model):
     titre = models.CharField(max_length=200, default="Nouvelle conversation")
     epinglee = models.BooleanField(default=False)
     archivee = models.BooleanField(default=False)
+    # Pinned at creation: an open interaction never changes runtime mid-flight.
+    engine_version = models.CharField(max_length=16, default='v2')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1434,3 +1436,6 @@ class ReservationBudgetJetons(models.Model):
     jetons_factures = models.PositiveIntegerField(default=0)
     cloturee = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+# Registered here so Django discovers the durable runtime models.
+from .runtime_models import (AgentRun, AgentInvocation, AgentOperation, AgentInteraction, AgentEvent, AgentModelAttempt, AgentDelivery)  # noqa: E402,F401
