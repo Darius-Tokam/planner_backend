@@ -1438,4 +1438,4 @@ class ReservationBudgetJetons(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 # Registered here so Django discovers the durable runtime models.
-from .runtime_models import (AgentRun, AgentInvocation, AgentOperation, AgentInteraction, AgentEvent, AgentModelAttempt, AgentDelivery)  # noqa: E402,F401
+from .runtime_models import (AgentRun, AgentInvocation, AgentOperation, AgentInteraction, AgentEvent, AgentModelAttempt, AgentDelivery, AgentWorkflowPurge)  # noqa: E402,F401

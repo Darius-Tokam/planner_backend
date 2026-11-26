@@ -1,6 +1,7 @@
 """Single PydanticAI loop. Custom tools have explicit DBOS steps."""
 import json
 import time
+from uuid import UUID
 from dataclasses import dataclass, field
 
 from asgiref.sync import sync_to_async
@@ -11,7 +12,7 @@ from pydantic_ai.messages import PartStartEvent, PartDeltaEvent, TextPart, TextP
 from pydantic_ai.tools import Tool
 
 from core.models import AgentOperation
-from services.agent.tools import TOOL_MAP
+from .catalog import TOOL_MAP
 from . import policy, store
 from .prompts import SYSTEM
 from .tools import execute_call, schema_for, failure
@@ -38,10 +39,45 @@ class Dependencies:
 def compact_result(result):
     if len(json.dumps(result, default=str)) <= 16000 or not result.get('operation_id'):
         return result
-    return {key: value for key, value in result.items() if key != 'data'} | {
+    compact = {key: value for key, value in result.items() if key not in ('data', 'receipt', 'message')} | {
+        'message': str(result.get('message', ''))[:1000],
         'data': {'truncated': True, 'result_ref': result['operation_id'],
-                 'available_fields': list(result.get('data', {})),
+                 'available_fields': list(result.get('data', {}))[:100],
                  'instruction': 'Lire les champs nécessaires via read_tool_result.'}}
+    return compact if len(json.dumps(compact, default=str)) <= 16000 else {
+        'operation_id': result['operation_id'], 'success': result.get('success'),
+        'data': {'truncated': True, 'result_ref': result['operation_id']}}
+
+
+def bounded_page(value, offset, limit, path=()):
+    if not isinstance(offset, int) or not isinstance(limit, int) or offset < 0 or not 1 <= limit <= 4000:
+        return failure('invalid_page', 'Portion invalide.')
+    if isinstance(value, dict):
+        keys = list(value)[offset:offset + min(limit, 100)]
+        page = {key: value[key] for key in keys}
+    elif isinstance(value, (list, str)):
+        page = value[offset:offset + limit]
+    else:
+        return {'data': value, 'truncated': False}
+    total = len(value)
+    truncated = offset + len(page) < total
+    # Large individual fields are references, not silently chopped facts.
+    def entry(item, child_path):
+        nonlocal truncated
+        if len(json.dumps(item, ensure_ascii=True)) > 1000:
+            truncated = True
+            return {'read_path': child_path, 'truncated': True, 'type': type(item).__name__}
+        return item
+    if isinstance(page, dict):
+        page = {key: entry(item, [*path, key]) for key, item in page.items()}
+    elif isinstance(page, list):
+        page = [entry(item, [*path, str(offset + i)]) for i, item in enumerate(page)]
+    result = {'data': page, 'total': total, 'offset': offset, 'truncated': truncated}
+    while len(json.dumps(result)) > 15000 and len(page) > 1:
+        page = dict(list(page.items())[:len(page)//2]) if isinstance(page, dict) else page[:len(page)//2]
+        result.update(data=page, truncated=True)
+    result['next_offset'] = offset + len(page) if offset + len(page) < total else None
+    return result
 
 
 @DBOS.step(name='planner.v3.tool', retries_allowed=False)
@@ -53,6 +89,10 @@ def _read_result(run_id, operation_id, path, offset, limit):
     # Scope to this conversation's owner; no arbitrary database object read.
     from core.models import AgentRun
     run = AgentRun.objects.get(pk=run_id)
+    try:
+        operation_id = UUID(str(operation_id))
+    except (ValueError, TypeError):
+        return failure('invalid_reference', 'Référence de résultat invalide.')
     operation = AgentOperation.objects.filter(pk=operation_id, run__user_id=run.user_id,
                                                run__conversation_id=run.conversation_id).first()
     if operation is None:
@@ -63,10 +103,28 @@ def _read_result(run_id, operation_id, path, offset, limit):
             value = value[int(key)] if isinstance(value, list) else value[key]
     except (TypeError, ValueError, IndexError, KeyError):
         return failure('invalid_path', 'Chemin absent du résultat.')
-    if isinstance(value, (list, str)):
-        page = value[offset:offset + limit]
-        return {'data': page, 'total': len(value), 'offset': offset, 'truncated': offset + limit < len(value)}
-    return {'data': value, 'truncated': False}
+    return bounded_page(value, offset, limit, path)
+
+
+def _read_turn(run_id, previous_id, field, offset, limit):
+    from core.models import AgentRun
+    try:
+        previous_id = UUID(str(previous_id))
+    except (ValueError, TypeError):
+        return failure('invalid_reference', 'Référence de demande invalide.')
+    run = AgentRun.objects.get(pk=run_id)
+    previous = AgentRun.objects.filter(pk=previous_id, user_id=run.user_id,
+        conversation_id=run.conversation_id).exclude(pk=run.pk).first()
+    if previous is None or field not in ('prompt', 'answer', 'operations'):
+        return failure('turn_not_found', 'Demande ou champ absent de cette conversation.')
+    value = (previous.prompt if field == 'prompt' else previous.result.get('message', '') if field == 'answer'
+             else [{'operation_id': str(op.pk), 'tool': op.tool} for op in previous.operations.order_by('created_at')])
+    return bounded_page(value, offset, limit)
+
+
+@DBOS.step(name='planner.v3.read_turn', retries_allowed=False)
+def durable_read_turn(*args):
+    return _read_turn(*args)
 
 
 @DBOS.step(name='planner.v3.read_result', retries_allowed=False)
@@ -181,7 +239,12 @@ def build_agent(model, *, durable=False):
 
     catalog = '\n'.join(f'{name}: {module.DESCRIPTION[:180]}' for name, module in TOOL_MAP.items()
                         if name not in CORE_TOOLS and name not in policy.EXCLUDED)
-    tools.extend([Tool(load_tools, takes_ctx=True, description='Active les schémas complets du catalogue:\n' + catalog),
+    async def read_turn(ctx, run_id: str, field: str = 'prompt', offset: int = 0, limit: int = 1000):
+        fn = durable_read_turn if ctx.deps.durable else _read_turn
+        return await sync_to_async(fn)(ctx.deps.run_id, run_id, field, offset, limit)
+
+    tools.extend([Tool(read_turn, takes_ctx=True, description='Relit prompt, answer ou operations d’une demande précédente par référence, sans perdre les corrections anciennes.'),
+                  Tool(load_tools, takes_ctx=True, description='Active les schémas complets du catalogue:\n' + catalog),
                   Tool(read_tool_result, takes_ctx=True, description='Relit une portion d’un résultat volumineux par référence.')])
     agent = Agent(model, name='planner_v3', deps_type=Dependencies, output_type=[str, DeferredToolRequests],
                   instructions=SYSTEM, tools=tools, event_stream_handler=stream_events, retries=2)

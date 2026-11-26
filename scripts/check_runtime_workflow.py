@@ -37,7 +37,7 @@ async def provider(messages, info):
 
 
 async def execute(invocation):
-    with SetWorkflowID(f'runtime-{invocation.pk}'):
+    with SetWorkflowID(f'planner-v3-{invocation.pk}'):
         return await run_invocation(str(invocation.pk))
 
 
@@ -60,6 +60,12 @@ if __name__ == '__main__':
         assert Task.objects.filter(user=user).count() == 1
         assert AgentModelAttempt.objects.filter(invocation=invocation).count() == 2
         assert run.events.filter(kind='text').exists()
-        print('PASS DBOSAgent + PydanticAI + PostgreSQL: tool, receipt, streamed text, replay, usage unchanged.')
+        from services.agent_runtime.purge import drain
+        prefix = f'planner-v3-{invocation.pk}'
+        assert DBOS.list_workflows(workflow_id_prefix=prefix, load_input=False, load_output=False)
+        user.delete()
+        drain(limit=1000)
+        assert not DBOS.list_workflows(workflow_id_prefix=prefix, load_input=False, load_output=False)
+        print('PASS DBOSAgent + PydanticAI + PostgreSQL: tool, receipt, streamed text, replay, usage unchanged, root and SDK children purged after account deletion.')
     finally:
         DBOS.destroy()

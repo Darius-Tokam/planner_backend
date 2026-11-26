@@ -3,6 +3,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class AgentRun(models.Model):
@@ -105,3 +106,12 @@ class AgentDelivery(models.Model):
     status = models.CharField(max_length=24, default='pending')
     result = models.JSONField(default=dict)
     updated_at = models.DateTimeField(auto_now=True)
+
+
+class AgentWorkflowPurge(models.Model):
+    """Anonymous tombstone survives account/conversation cascades and retries."""
+    workflow_id = models.CharField(max_length=200, unique=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(default=timezone.now)
+    last_error = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)

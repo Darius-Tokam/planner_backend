@@ -9,3 +9,5 @@ class CoreConfig(AppConfig):
         from core import signaux_reveil
 
         signaux_reveil.connecter()
+        from services.agent_runtime.purge import connect
+        connect()

@@ -34,6 +34,8 @@ class Command(BaseCommand):
             while True:
                 close_old_connections()
                 expire_waiting()
+                from services.agent_runtime.purge import drain
+                drain()
                 ids = list(AgentInvocation.objects.filter(status='queued', run__status='queued')
                            .order_by('created_at').values_list('pk', flat=True)[:100])
                 handles = []

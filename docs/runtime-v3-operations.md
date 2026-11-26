@@ -16,7 +16,7 @@ L’ancienne route refuse une conversation v3 pour empêcher deux moteurs de mod
 ## Services et configuration
 
 PostgreSQL est obligatoire pour le worker. Le serveur HTTP et le worker utilisent la même base.
-Les migrations Django 0049 et 0050 créent l’état applicatif. DBOS initialise son schéma `dbos`.
+Les migrations Django 0049 à 0051 créent l’état applicatif et la file de purge. DBOS initialise son schéma `dbos`.
 Prévoir des sauvegardes de ces deux ensembles et limiter leur accès aux services concernés.
 
 | Variable | Valeur initiale | Effet |
@@ -74,9 +74,17 @@ Les erreurs distinguent quota mesuré et protection de coût, avec heure de repr
 Les checkpoints contiennent le protocole modèle, y compris des données personnelles et, selon
 le fournisseur, son raisonnement. Ils ne sont pas exposés par l’API publique. Les événements
 client contiennent uniquement la prose publique, les outils, les questions et leurs états.
-Définir une politique de rétention DBOS avant une ouverture générale : supprimer un compte
-Django ne purge pas automatiquement les anciennes charges utiles dans le schéma DBOS.
+Supprimer une conversation ou un compte inscrit une demande de purge dans la même transaction.
+Le worker annule puis supprime les workflows DBOS et leurs enfants. Une erreur conserve la demande
+pour réessai. Le tombstone conserve seulement un UUID, un compteur, une date et une classe d’erreur;
+des passages répétés éliminent les checkpoints qu’un processus déjà en vol pourrait écrire tardivement.
+La purge dépend donc du worker actif. Surveiller `AgentWorkflowPurge.last_error` et `next_attempt_at`.
+Définir séparément une durée de rétention des checkpoints des comptes actifs avant une ouverture générale.
 L’accès DBOS doit rester interne. Aucun endpoint de diagnostic public ne doit renvoyer ces données.
+
+Les pièces jointes v3 sont extraites sans modifier le planning. Le modèle reçoit le résultat ou
+l’erreur d’extraction; `import_document` applique uniquement un import demandé. La permission IA
+est relue avant le commit de l’extraction et avant l’outil d’import. Le chemin v2 reste compatible.
 
 ## Vérifications reproductibles
 
@@ -99,3 +107,6 @@ La CI PostgreSQL exécute ces preuves sans clé IA. Les évaluations réelles re
 Frontend : `npx vitest run`, `npx tsc --noEmit -p tsconfig.app.json`, `npm run build`.
 Le script `scripts/check-runtime-browser.mjs` utilise Edge headless et les serveurs QA locaux
 8017 et 5179, préparés par `scripts/serve_runtime_qa.py`. Il ne teste pas TestFlight ni APNs.
+`PLANNER_QA_CONTROLLED=1`, uniquement dans ces scripts QA, remplace le fournisseur par une fixture
+de protocole pour tester le transport sans réseau. Le rapport indique alors `provider: controlled`.
+Ce mode ne constitue jamais une mesure de compréhension ou de latence DeepSeek.

@@ -21,6 +21,7 @@ from services.agent_v2.budget_tour import (
 from services.agent_v2.trace_tour import trace_courante
 
 
+@transaction.atomic
 def start_attempt(invocation_id, key, phase, provider, input_bound, max_output):
     from core.models import AgentInvocation
     invocation = AgentInvocation.objects.select_related('run').get(pk=invocation_id)
@@ -49,6 +50,9 @@ def start_attempt(invocation_id, key, phase, provider, input_bound, max_output):
         call = AppelFournisseur(phase, provider, input_bound, max_output)
         attempt = AgentModelAttempt.objects.create(invocation=invocation, request_key=key,
                                                    reservation_id=trace.reservation.pk)
+        from .store import emit
+        emit(invocation.run_id, 'attempt', {'request_key': key, 'attempt_id': str(attempt.pk)},
+             key=f'attempt:{attempt.pk}')
         return attempt, trace, call
     except Exception:
         fermer_trace(trace)
@@ -57,6 +61,7 @@ def start_attempt(invocation_id, key, phase, provider, input_bound, max_output):
         trace_courante.reset(token)
 
 
+@transaction.atomic
 def finish_attempt(attempt_id, trace, call, response, elapsed_ms):
     try:
         with transaction.atomic():

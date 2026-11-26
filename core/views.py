@@ -1868,7 +1868,8 @@ class ConversationMessagesView(APIView):
                 .filter(conversation=conv)
                 .select_related('attachment')
                 .prefetch_related('attachments')
-                .order_by('created_at')[:200])
+                .order_by('-created_at', '-pk')[:200])
+        msgs = list(reversed(msgs))
         return Response({
             'conversation': {'id': conv.pk, 'titre': conv.titre, 'engine_version': conv.engine_version},
             'messages': [{

@@ -8,7 +8,7 @@ from django.utils import timezone
 from pydantic import ValidationError
 
 from core.models import AgentInteraction, AgentRun
-from services.agent.tools import TOOL_MAP
+from .catalog import TOOL_MAP
 from services.agent.tools.base import ToolResult
 from services.agent_v2.registre import Registre
 from services.agent_v2.reconciliation import reconcilier
@@ -88,13 +88,22 @@ def _execute_call_db(run_id, call_id, name, arguments):
         if not has_ai_consent(run.user):
             return failure('ai_consent_required', 'Le consentement IA a été révoqué. Aucune nouvelle action autorisée.')
         get_user_model().objects.select_for_update().get(pk=run.user_id)
+        if name == 'optimize_week' and not args.get('start_date'):
+            args['start_date'] = run.context.get('date') or timezone.localdate(run.created_at).isoformat()
+        signature = store.digest({'tool': name, 'arguments': args})
+        interaction = run.interactions.filter(tool_call_id=call_id).first()
+        if interaction:
+            if interaction.prepared.get('signature') != signature:
+                return failure('call_identity_conflict', 'Cet identifiant appartient à une autre question ou action.')
+            return waiting(interaction)
         existing = run.operations.filter(tool_call_id=call_id).first()
         if existing:
             if existing.arguments_hash != store.digest({'tool': name, 'arguments': args}):
                 return failure('call_identity_conflict', 'Cet identifiant d’appel a déjà été utilisé.')
             return existing.result
         if name == 'ask_question_custom':
-            return defer(run, call_id, args['kind'], args)
+            return defer(run, call_id, args['kind'], args,
+                         {'tool': name, 'arguments': args, 'signature': signature})
         try:
             targets = policy.snapshot(run.user, name, args)
         except ObjectDoesNotExist:
@@ -183,6 +192,8 @@ def resume_interaction(interaction_id):
         # A committed receipt takes precedence over later target changes.
         existing = run.operations.filter(tool_call_id=interaction.tool_call_id).first()
         if existing:
+            if existing.arguments_hash != prepared.get('signature'):
+                return failure('call_identity_conflict', 'Le reçu appartient à une autre action.')
             return existing.result
         if not interaction.answer.get('approved'):
             return failure('user_declined', 'L’utilisateur a refusé cette action. Continue les autres demandes indépendantes.')

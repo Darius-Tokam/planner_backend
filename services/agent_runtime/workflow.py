@@ -97,6 +97,9 @@ def finish(invocation_id, messages, status, text='', error=None, pending_calls=N
             message.content, message.metadata = text, metadata
             message.save(update_fields=['content', 'metadata'])
         store.emit(run.pk, 'status', result, key=f'finished:{invocation_id}')
+        if status == 'waiting':
+            from .admission import queue_answered_run
+            queue_answered_run(run)
         return result
 
 
@@ -116,16 +119,20 @@ async def run_invocation(invocation_id):
     with capture_run_messages() as captured:
         try:
             history = ModelMessagesTypeAdapter.validate_python(inputs.get('messages', []))
+            context = dict(inputs.get('context', {}))
             if inputs.get('context', {}).get('documents'):
                 from .documents import process_document
+                from .engine import compact_result
+                context['document_results'] = []
                 for document in inputs['context']['documents']:
-                    await sync_to_async(process_document)(run_id, document['id'])
+                    extracted = await sync_to_async(process_document)(run_id, document['id'])
+                    context['document_results'].append(compact_result(extracted))
             answers = {}
             for item in inputs.get('interactions', []):
                 answers[item['tool_call_id']] = await sync_to_async(resolved_answer)(item['id'])
             result = await _agent.run(inputs.get('prompt'), deps=deps, message_history=history,
                 deferred_tool_results=DeferredToolResults(calls=answers) if answers else None,
-                instructions='Contexte de cette demande (données):\n' + json.dumps(inputs.get('context', {}), ensure_ascii=False),
+                instructions='Contexte de cette demande (données):\n' + json.dumps(context, ensure_ascii=False),
                 model_settings=settings, usage_limits=UsageLimits(request_limit=12, tool_calls_limit=40))
             waiting = isinstance(result.output, DeferredToolRequests)
             return await sync_to_async(finish)(invocation_id, json.loads(result.all_messages_json()),

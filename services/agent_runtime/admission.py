@@ -36,6 +36,11 @@ def admit(user, conversation_id, turn_id, message, fingerprint, files=(), docume
         context = {'message_received_at': now.isoformat(), 'date': now.date().isoformat(),
                    'timezone': timezone.get_current_timezone_name(), 'omitted_turns': omitted,
                    'name': user.first_name or user.username}
+        context['recent_turns'] = [
+            {'run_id': str(item.pk), 'request': item.prompt[:600],
+             'answer_preview': str(item.result.get('message', ''))[:600],
+             'instruction': 'Utilise read_turn pour relire les détails omis.'}
+            for item in conversation.agent_runs.filter(status='completed').order_by('-created_at')[:3]]
         # Do not drop committed effects just because their final prose failed.
         # The full receipts remain accessible via read_tool_result references.
         from core.models import AgentOperation
@@ -56,10 +61,10 @@ def admit(user, conversation_id, turn_id, message, fingerprint, files=(), docume
                                      payload_hash=fingerprint, prompt=prompt, context=context)
         inputs = {'prompt': prompt, 'messages': history, 'context': context}
         if docs:
-            inputs['enabled_tools'] = ['process_uploaded_document', 'resolve_document_entry']
+            inputs['enabled_tools'] = ['process_uploaded_document', 'import_document', 'resolve_document_entry']
         AgentInvocation.objects.create(run=run, number=0, inputs=inputs)
         msg = ConversationMessage.objects.create(user=user, conversation=conversation, role='user', content=message,
-                                                metadata={'engine_version': 'v3', 'run_id': str(run.pk)})
+                                                metadata={'engine_version': 'v3', 'run_id': str(run.pk), 'conversation_id': conversation.pk})
         msg.attachments.set(docs)
         ConversationMessage.objects.create(user=user, conversation=conversation, role='assistant', content='',
             metadata={'engine_version': 'v3', 'run_id': str(run.pk), 'conversation_id': conversation.pk, 'status': 'queued'})
@@ -74,13 +79,19 @@ def resume(user, interaction_id, value):
     with transaction.atomic():
         interaction = store.answer(user, interaction_id, value)
         run = AgentRun.objects.select_for_update().get(pk=interaction.run_id)
+        return queue_answered_run(run)
+
+
+def queue_answered_run(run):
+    """Caller holds the run lock. Answer and worker finish converge here."""
+    with transaction.atomic():
         if run.status != 'waiting':
             return run
         pending_ids = run.result.get('pending_calls')
         interactions = run.interactions.all()
         if pending_ids is not None:
             interactions = interactions.filter(tool_call_id__in=pending_ids)
-        if interactions.filter(status='pending').exists():
+        if not interactions.exists() or interactions.exclude(status='answered').exists():
             return run
         last = run.invocations.order_by('-number').first()
         inputs = {'prompt': None, 'messages': run.messages, 'context': run.context,
