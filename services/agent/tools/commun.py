@@ -390,7 +390,10 @@ def _window_conflict(user, target_date, s, e, exclude_scheduled_id=None):
     """ToolResult d'erreur si la fenêtre [s,e] (minutes) du jour target_date
     chevauche un mur fixe ou le sommeil protégé; sinon None. Réutilisable pour
     chaque moitié d'un événement ponctuel qui traverse minuit."""
-    for bs, be in fixed_busy_intervals(user, target_date, exclude_scheduled_id=exclude_scheduled_id):
+    murs = fixed_busy_intervals(user, target_date, exclude_scheduled_id=exclude_scheduled_id)
+    conflits_fixes = [{'start_time': _minutes_to_str(bs), 'end_time': _minutes_to_str(be)}
+                      for bs, be in murs if s < be and bs < e]
+    for bs, be in murs:
         if s < be and bs < e:
             item = _first_conflicting_item(user, target_date, s, e, exclude_scheduled_id)
             titre = None
@@ -403,7 +406,10 @@ def _window_conflict(user, target_date, s, e, exclude_scheduled_id=None):
                 label = f"une occupation existante ({_minutes_to_str(bs)}-{_minutes_to_str(be)})"
             return ToolResult(
                 success=False,
-                data={"conflict": {
+                # Le conflit nommé est un exemple. Tous les murs de la fenêtre
+                # sont transmis : retirer le premier ne prouve pas sa libération.
+                data={"fixed_conflicts": conflits_fixes, "conflict_is_exhaustive": False,
+                      "conflict": {
                     "start_time": _minutes_to_str(bs),
                     "end_time": _minutes_to_str(be),
                     "titre": titre,

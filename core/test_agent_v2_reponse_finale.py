@@ -384,10 +384,15 @@ class ReponseApresOutilTests(TransactionTestCase):
             registre.ajouter("list_tasks", {}, resultat)
             return resultat.to_string()
 
+        def juger_reponse(etat, questions):
+            return {'reponse_etayee': {'statut': 'decision', 'confiance': .99,
+                'valeur': 'contredit' if 'supprimé' in etat['reponse_assistant'] else 'conforme'}}
+
         with patch.object(module_agent, "modele_agir",
                           return_value=FunctionModel(modele, stream_function=en_flux)), \
              patch("services.agent_v2.budget_tour.modele_borne", side_effect=lambda m, _tag: m), \
              patch.object(module_agent, "outils_pour_le_modele", return_value=[create_task, list_tasks]), \
+             patch('services.agent_v2.jugement.juger', side_effect=juger_reponse), \
              patch.object(module_agent, "prompt_agir", return_value="Réponds à la demande."), \
              patch.object(PlannerAgentV2, "_historique", return_value=[]):
             reponse = PlannerAgentV2()._boucle(user, "Crée la tâche Sport", registre)

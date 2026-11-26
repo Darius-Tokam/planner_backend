@@ -32,7 +32,7 @@ class RegleCoursExistantTests(SimpleTestCase):
 
     def test_un_ajout_complet_se_cree(self):
         from services.agent_v2.prompts import REGLES_AGIR
-        self.assertIn("REPONSE A TA QUESTION", REGLES_AGIR)
+        self.assertIn("CONTINUITE DE LA DEMANDE", REGLES_AGIR)
         # Doctrine 2026-09-29: la mecanique d'ajout vit dans la description
         # V2 de create_block, pas dans le prompt.
         from services.agent.tools import TOOL_MAP

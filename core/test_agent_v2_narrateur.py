@@ -801,7 +801,8 @@ class HistoriqueTests(NarrateurBase):
         self.assertIn("[Choix proposés : 7 h à 8 h 30 | 15 h 50 à 17 h 20]",
                       historique[-1].parts[0].content)
 
-    def test_sans_choix_le_texte_reste_tel_quel(self):
+    def test_sans_choix_le_texte_reste_intact_apres_la_date_source(self):
         ConversationMessage.objects.create(user=self.user, role="assistant", content="Salut !")
         historique = PlannerAgentV2()._historique(self.user)
-        self.assertEqual(historique[-1].parts[0].content, "Salut !")
+        self.assertTrue(historique[-1].parts[0].content.endswith('\nSalut !'))
+        self.assertIn('écrit le', historique[-1].parts[0].content)

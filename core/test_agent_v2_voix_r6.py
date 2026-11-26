@@ -205,15 +205,16 @@ class D6CheminRapideTests(_TourDecideBase):
         self.assertTrue(any("chemin=code" in l for l in journal.output), journal.output)
         return done
 
-    def test_execute_rend_les_faits_seuls(self):
+    def test_execute_reprend_la_boucle_avec_les_recus(self):
         bloc = self.bloc_reel()
         self.inscrire = [self.action_reelle("delete_block", {"block_id": bloc.pk},
                                            par_le_code=True, decision_code="execute")]
-        done = self._tour_rapide("Tous les jeudis (supprimer la série).")
+        _, done = self.tour(message="Tous les jeudis (supprimer la série).", dire=ReponseDire())
+        self.assertIn('boucle', self.ordre)
+        self.assertIn('RÉSULTATS DES OUTILS', self.vus['message_boucle'])
         self.assertEqual(done["response"], "FAITS")
         self.assertFalse(done["question_posee"])
         self.assertFalse(RecurringBlock.all_objects.get(pk=bloc.pk).active)
-        self.assertLess(self.duree, 5.0)
 
     def test_reposee_rend_la_reprise_et_la_question(self):
         self.inscrire = [("delete_block", {"block_id": 5}, reposee(demande("portee_jour", "p1")))]

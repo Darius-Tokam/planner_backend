@@ -87,6 +87,11 @@ def consommer_reponse(user, conversation, courant, payload):
         precedent.save(update_fields=["metadata"])
     courant.metadata = {**(courant.metadata or {}), "question_answer": {
         "id": payload["id"], "values": valeurs,
+    }, "reponse_validee": {
+        "question": question.get("question", ""),
+        "champs": [{"id": c["id"], "label": c.get("label", ""),
+                    "type": c.get("type", ""), "valeur": valeurs[c["id"]]}
+                   for c in champs],
     }}
     courant.save(update_fields=["metadata"])
     return valeurs

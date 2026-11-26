@@ -604,6 +604,9 @@ def verifier_prose(reponse: ReponseDire, registre, *, autoriser_conversation=Fal
     champs = {}
     supprimees = 0
     fuites = []
+    from services.agent_v2.validation_recus import est_attestee
+    if not reponse.suite and est_attestee(registre, reponse.ouverture):
+        return reponse, 0, []
     conversation = bool(autoriser_conversation and registre is not None and registre.vide())
     # Les lectures et les échecs ne prouvent aucune mutation. Leur explication
     # vient du modèle, même lorsqu'un résumé d'outil a été rendu. La garde

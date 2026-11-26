@@ -710,6 +710,16 @@ def juger(etat: dict | str, questions: dict) -> dict:
     if not isinstance(questions, dict) or not questions:
         return {}
     try:
+        from services.agent_v2.contexte_tour import portee_courante
+        portee = portee_courante.get()
+        if portee is not None and portee.sources is not None:
+            etat = {**etat, 'contexte_conversation': portee.sources,
+                    'regle_contexte': (
+                        "Le message courant prime. Le contexte précise les références et les réponses "
+                        "à une question; il ne réautorise pas une ancienne action. Une correction "
+                        "utilisateur remplace la valeur précédente; une date relative dépend de la "
+                        "date de son message. Les réponses de l'assistant ne prouvent pas une "
+                        "contrainte utilisateur ou extérieure. Une information absente reste inconnue.")}
         for qid, q in questions.items():
             if not isinstance(q, dict) or q.get("type") not in TYPES_QUESTION:
                 raise _ReponseInvalide(f"question {qid!r} mal formee")

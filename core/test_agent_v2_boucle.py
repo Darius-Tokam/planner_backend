@@ -160,8 +160,8 @@ class PersistanceTests(TransactionTestCase):
         with patch.object(self.Agent, '_boucle', _boucle_qui_regarde):
             self.Agent().process_message(self.user, "deuxieme message")
 
-        self.assertIn('premier message', vus['historique'])
-        self.assertNotIn('deuxieme message', vus['historique'])
+        self.assertTrue(any(texte.endswith('\npremier message') for texte in vus['historique']))
+        self.assertNotIn('deuxieme message', '\n'.join(vus['historique']))
 
     def test_la_reponse_persistee_est_celle_qui_est_rendue(self):
         res = self._tour("ajoute maths")

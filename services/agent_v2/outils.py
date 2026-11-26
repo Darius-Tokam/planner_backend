@@ -808,7 +808,8 @@ def _fin_de_recurrence_repondue(user, block, fin, aujourdhui, tache: str = "") -
     fin, et la fin tombe au-dela des 7 prochains jours. Le message de
     l'utilisateur ne porte pas sa piece jointe en v2: le document se lit par
     l'ordre des envois."""
-    from core.models import ConversationMessage, UploadedDocument
+    from core.models import UploadedDocument
+    from services.agent_v2.contexte_tour import messages_du_chat
     from services.agent_v2.boutons import MOTIF_FIN_RECURRENCE
 
     if block.source_document_id is None or block.end_date is not None:
@@ -824,7 +825,7 @@ def _fin_de_recurrence_repondue(user, block, fin, aujourdhui, tache: str = "") -
     _, _, courant = str(tache or "").rpartition(":")
     if not courant.isdigit():
         return False
-    deux = list(ConversationMessage.objects.filter(user=user).order_by("-pk")[:2])
+    deux = list(messages_du_chat(user).order_by("-pk")[:2])
     if (len(deux) < 2 or deux[0].pk != int(courant) or deux[0].role != "user"
             or deux[1].role != "assistant"):
         return False
@@ -1787,9 +1788,9 @@ def _reponse_a_une_habitude(ctx: _Contexte) -> bool:
     """Le message repond-il a une question posee sur une demande qui disait
     deja la recurrence (« ajoute du yoga chaque semaine », puis « samedi a
     10 h ») ?"""
-    from core.models import ConversationMessage
+    from services.agent_v2.contexte_tour import messages_du_chat
 
-    derniers = ConversationMessage.objects.filter(user=ctx.user).order_by("-pk")[:6]
+    derniers = messages_du_chat(ctx.user).order_by("-pk")[:6]
     for message in derniers:
         if message.role != "assistant":
             continue
@@ -1797,8 +1798,8 @@ def _reponse_a_une_habitude(ctx: _Contexte) -> bool:
         if not meta.get("question_posee") and not meta.get("demandes") \
                 and not meta.get("interactive_inputs"):
             return False
-        origine = ConversationMessage.objects.filter(
-            user=ctx.user, pk=meta.get("en_reponse_a"), role="user").first()
+        origine = messages_du_chat(ctx.user).filter(
+            pk=meta.get("en_reponse_a"), role="user").first()
         return bool(origine and _RECURRENCE.search(dem.sans_accents(origine.content or "").lower()))
     return False
 
@@ -1952,7 +1953,8 @@ def _titre_du_formulaire(ctx: _Contexte, nom: str, kwargs: dict):
     structurees (le nom garde dans les metadonnees du formulaire, les titres en
     base), jamais sur les mots du message. Un second appel au meme titre passe:
     l'utilisateur voulait peut-etre vraiment une seance de plus de ce cours."""
-    from core.models import ConversationMessage, RecurringBlock
+    from core.models import RecurringBlock
+    from services.agent_v2.contexte_tour import messages_du_chat
 
     if nom != "create_block" or ctx.etat.attente.get("titre_formulaire_renvoye"):
         return None
@@ -1960,7 +1962,7 @@ def _titre_du_formulaire(ctx: _Contexte, nom: str, kwargs: dict):
     _, _, courant = str(ctx.tache or "").rpartition(":")
     if not titre or not courant.isdigit():
         return None
-    deux = list(ConversationMessage.objects.filter(user=ctx.user).order_by("-pk")[:2])
+    deux = list(messages_du_chat(ctx.user).order_by("-pk")[:2])
     if len(deux) < 2 or deux[0].pk != int(courant) or deux[1].role != "assistant":
         return None
     meta = deux[1].metadata if isinstance(deux[1].metadata, dict) else {}
@@ -2929,7 +2931,9 @@ def _sans_boucle(fabrique):
         asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(fabrique())
-    return _POOL_CHOIX.submit(lambda: asyncio.run(fabrique())).result()
+    from contextvars import copy_context
+    contexte = copy_context()
+    return _POOL_CHOIX.submit(contexte.run, lambda: asyncio.run(fabrique())).result()
 
 
 # Les seules lectures que le code s'autorise a executer lui-meme (filet de

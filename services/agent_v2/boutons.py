@@ -197,9 +197,9 @@ def _ignoree_deux_fois(user, motif: str) -> bool:
     """
     if user is None or getattr(user, "pk", None) is None:
         return False
-    from core.models import ConversationMessage
+    from services.agent_v2.contexte_tour import messages_du_chat
 
-    recents = list(ConversationMessage.objects.filter(user=user).order_by("-pk")[:12])
+    recents = list(messages_du_chat(user).order_by("-pk")[:12])
     recents.reverse()
     paires = [
         (message, recents[rang + 1])

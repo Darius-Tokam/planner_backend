@@ -67,10 +67,9 @@ def tour_a_pose_une_question(user) -> bool:
     par pk seulement: si l'utilisateur a deja repondu, la question est close
     et les suggestions redeviennent utiles.
     """
-    from core.models import ConversationMessage
+    from services.agent_v2.contexte_tour import messages_du_chat
 
-    dernier = (ConversationMessage.objects
-               .filter(user=user)
+    dernier = (messages_du_chat(user)
                .order_by("-pk")
                .only("role", "metadata", "content")
                .first())
