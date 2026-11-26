@@ -329,10 +329,10 @@ class PromptsTests(TestCase):
         self.assertIn("tirées du planning réel",
                       description_v2(TOOL_MAP["present_choices"]))
 
-    def test_table_de_decision_nomme_les_cas_a_demander(self):
+    def test_table_de_decision_exprime_les_criteres_generaux(self):
         from services.agent_v2.prompts import REGLES_AGIR
-        for mot in ("DEVINE", "DEMANDE", "cours", "quart", "reunion", "lecon",
-                    "plus", "davantage", "mieux", "planning vide", "ask_question_custom"):
+        for mot in ("DECIDER OU DEMANDER", "au moins deux interpretations plausibles",
+                    "ne modifie rien", "Propose une valeur manquante", "ask_question_custom"):
             with self.subTest(mot=mot):
                 self.assertIn(mot, REGLES_AGIR)
 
@@ -395,7 +395,7 @@ class PromptsTests(TestCase):
         for requis in ("TA REPONSE FINALE", "UNE question", "ask_question_custom",
                        "Si le systeme pose deja une question ce tour",
                        "tutoiement", "Deux ou trois phrases",
-                       "Ne complete jamais"):
+                       "une donnee absente reste inconnue"):
             with self.subTest(requis=requis):
                 self.assertIn(requis, prompt)
 

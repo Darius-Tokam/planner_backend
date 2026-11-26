@@ -67,7 +67,7 @@ class AgentConversation(PlannerAgentV2):
             yield from super().process_message_stream(
                 user, message, attachment, use_streaming=use_streaming,
                 generate_quick_replies=False, tap=tap,
-                conversation_id=conversation_id, question_answer=question_answer)
+                conversation_id=self._conversation.pk, question_answer=question_answer)
             return
 
         if self._admission_refusee or _budget_jour_epuise(user):
@@ -98,15 +98,15 @@ class AgentConversation(PlannerAgentV2):
         yield from super().process_message_stream(
             user, message, attachment, use_streaming=use_streaming,
             generate_quick_replies=generate_quick_replies, tap=tap,
-            conversation_id=conversation_id, question_answer=question_answer)
+            conversation_id=self._conversation.pk, question_answer=question_answer)
 
-    @staticmethod
-    def _tap_valide(user, tap):
+    def _tap_valide(self, user, tap):
         from services.agent_v2.demandes import _moment, _ids_options, FENETRE_ATTENTE
         from datetime import timedelta
         if not isinstance(tap, dict) or not tap.get('demande') or not tap.get('option'):
             return False
-        lignes = list(ConversationMessage.objects.filter(user=user).order_by('-pk')[:2])
+        lignes = list(ConversationMessage.objects.filter(
+            user=user, conversation=self._conversation).order_by('-pk')[:2])
         if len(lignes) != 2 or lignes[0].role != 'assistant' or lignes[1].role != 'user':
             return False
         meta = lignes[0].metadata or {}

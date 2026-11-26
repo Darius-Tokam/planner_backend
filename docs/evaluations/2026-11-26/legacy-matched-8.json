@@ -1,0 +1,74 @@
+{
+  "date": "2026-11-26T10:44:51.030784+00:00",
+  "model": "deepseek-flash",
+  "reasoning": "disabled",
+  "judge": "disabled",
+  "concurrency": 1,
+  "results": [
+    {
+      "id": "greet1",
+      "elapsed_s": 8.687,
+      "first_text_s": 8.672,
+      "measured_tokens": 36977,
+      "public_text": "Bonjour ! Bienvenue, je suis ton assistant de planification. Dis-moi simplement ce que tu préfères et on part de là.",
+      "task_count": 1
+    },
+    {
+      "id": "read_null",
+      "elapsed_s": 7.641,
+      "first_text_s": 7.625,
+      "measured_tokens": 50237,
+      "public_text": "Tes objectifs :\n- ProveIt\n\nTon objectif ProveIt n'a aucune date limite d'enregistrée, donc rien ne le borne pour l'instant.\n\nTu veux que je lui en fixe une, et si oui à quelle date ?",
+      "task_count": 1
+    },
+    {
+      "id": "task1",
+      "elapsed_s": 3.984,
+      "first_text_s": 3.968,
+      "measured_tokens": 24326,
+      "public_text": "Ajouté à ta liste : Acheter du lait.\n\nVeux-tu que je lui fixe une échéance ou un moment dans ta journée ?",
+      "task_count": 2
+    },
+    {
+      "id": "task_two",
+      "elapsed_s": 4.422,
+      "first_text_s": 4.422,
+      "measured_tokens": 24565,
+      "public_text": "- Ajouté à ta liste : Acheter du pain.\n- Ajouté à ta liste : Appeler maman.",
+      "task_count": 3
+    },
+    {
+      "id": "task_delete",
+      "elapsed_s": 7.516,
+      "first_text_s": 7.5,
+      "measured_tokens": 49421,
+      "public_text": "Dans ta liste :\n- Rapport\n\nTu veux vraiment supprimer la tâche Rapport ?",
+      "task_count": 1
+    },
+    {
+      "id": "task_missing",
+      "elapsed_s": 1.938,
+      "first_text_s": 1.922,
+      "measured_tokens": 12048,
+      "public_text": "Je peux le faire, mais il me manque la modification voulue.\n\nQue veux-tu changer dans ta tâche Rapport : le titre, la priorité, la durée prévue, l'échéance ou autre chose ?",
+      "task_count": 1
+    },
+    {
+      "id": "event_missing",
+      "elapsed_s": 2.344,
+      "first_text_s": 2.328,
+      "measured_tokens": 12044,
+      "public_text": "Bonne chance pour lundi.\n\nTu veux que je te bloque du temps d'étude d'ici là, ou tu me donnes seulement l'heure de l'examen pour que je le place dans ta journée?",
+      "task_count": 1
+    },
+    {
+      "id": "task_recurrence",
+      "elapsed_s": 13.812,
+      "first_text_s": 13.797,
+      "measured_tokens": 97164,
+      "public_text": "- Ajouté à ta liste : Sortir les poubelles.\n- Répétition créée : Sortir les poubelles.\n\nTu veux vraiment supprimer la tâche Sortir les poubelles ?",
+      "task_count": 7
+    }
+  ],
+  "p50_s": 5.968999999999999
+}

@@ -13,6 +13,43 @@ on:
     branches: [main]
 
 jobs:
+  runtime-postgres:
+    name: Runtime durable PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: planner_test
+          POSTGRES_PASSWORD: local-ci-only
+          POSTGRES_DB: planner_refonte
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U planner_test -d planner_refonte"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://planner_test:local-ci-only@127.0.0.1:5432/planner_refonte
+      DEBUG: "True"
+      SECRET_KEY: ci-not-a-secret
+      JEV_API_KEY: ""
+      TYPESAFE_API_KEY: ""
+      JUGEMENT_REPLI_LLM: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py migrate --noinput
+      - name: Transactions, autorisations, API et concurrence
+        run: python manage.py test core.test_runtime_review core.test_agent_runtime_persistence core.test_agent_runtime_tools core.test_agent_runtime_loop core.test_agent_runtime_api core.test_agent_runtime_concurrency --noinput
+      - name: Processus tue apres commit puis repris
+        run: python scripts/check_runtime_recovery.py
+      - name: Adaptateur DBOSAgent reel
+        run: python scripts/check_runtime_workflow.py
+
   suite:
     name: Suite Django
     runs-on: ubuntu-latest
@@ -57,6 +94,22 @@ jobs:
         # interroge.
         run: python manage.py test -v 1 --noinput
 
+  pytest:
+    name: Suite pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SECRET_KEY: ci-not-a-secret
+      JEV_API_KEY: ""
+      TYPESAFE_API_KEY: ""
+      JUGEMENT_REPLI_LLM: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+      - run: pip install -r requirements.txt
       - name: Suite pytest
         # Treize modules de core/ ecrivent leurs tests en FONCTIONS: la
         # decouverte unittest les importe sans les collecter, et le job

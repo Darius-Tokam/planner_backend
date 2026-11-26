@@ -114,11 +114,8 @@ def demandes_en_attente(user, maintenant=None) -> list[dict]:
     (un tour abandonne qui sauve sa reponse apres le message suivant) rendent
     la question inutilisable, et le pire effet est une question reposee.
     """
-    from core.models import ConversationMessage
-
-    lignes = list(
-        ConversationMessage.objects.filter(user=user).order_by("-pk")[:3]
-    )
+    from services.agent_v2.contexte_tour import messages_du_chat
+    lignes = list(messages_du_chat(user).order_by("-pk")[:3])
     if len(lignes) < 3:
         return []
     courant, assistant, precedent = lignes

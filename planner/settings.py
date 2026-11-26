@@ -13,6 +13,12 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Rollout only for capable clients creating new conversations. Existing chats
+# keep their engine, including pending human interactions during a rollback.
+PLANNER_RUNTIME_DEFAULT = os.getenv('PLANNER_RUNTIME_DEFAULT', 'v2')
+PLANNER_V3_USER_IDS = os.getenv('PLANNER_V3_USER_IDS', '')
+PLANNER_RUNTIME_MODEL = os.getenv('PLANNER_RUNTIME_MODEL', 'deepseek-flash')
+
 DEBUG = os.getenv('DEBUG', 'False').lower() in ('true', '1', 'yes')
 
 # Vrai sous `manage.py test` et sous pytest. Sert a couper tout appel sortant
@@ -295,6 +301,7 @@ DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', '8192'))
 # UsageLimitExceeded, deja gere en repli. BUDGET_JETONS_JOUR est suivi en base
 # (core.BudgetJetonsJournalier) et bloque les phases LLM du tour.
 AGENT_V2_DELAI_TOUR = float(os.getenv('AGENT_V2_DELAI_TOUR', '180'))
+AGENT_MODELE_DELAI = int(os.getenv('AGENT_MODELE_DELAI', '25'))
 AGENT_DECISION_DELAI = float(os.getenv('AGENT_DECISION_DELAI', '12'))
 AGENT_MAX_JUGEMENTS = int(os.getenv('AGENT_MAX_JUGEMENTS', '6'))
 AGENT_RESERVATION_INITIALE = int(os.getenv('AGENT_RESERVATION_INITIALE', '12000'))

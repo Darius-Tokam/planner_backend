@@ -44,6 +44,8 @@ def execute(user: User, **kwargs) -> ToolResult:
 
     title = (kwargs.get("title") or "").strip()
     qs = ScheduledBlock.objects.filter(user=user, date=target_date).select_related("task")
+    if '_target_ids' in kwargs:
+        qs = qs.filter(pk__in=kwargs['_target_ids'].get('ScheduledBlock', []))
     if title:
         qs = qs.filter(task__title__icontains=title)
     blocks = list(qs)
@@ -70,6 +72,8 @@ def execute(user: User, **kwargs) -> ToolResult:
         user=user, date=target_date + timedelta(days=1),
         task_id__in=task_ids, start_time=time(0, 0),
     )
+    if '_target_ids' in kwargs:
+        tail = tail.filter(pk__in=kwargs['_target_ids'].get('ScheduledBlock', []))
     blocks += list(tail)
 
     cancelled = []

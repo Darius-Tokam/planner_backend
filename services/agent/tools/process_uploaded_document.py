@@ -60,6 +60,11 @@ def execute(user: User, **kwargs) -> ToolResult:
             public="Le document est encore en cours de traitement, réessaie dans quelques secondes.",
         )
 
+    if doc.extracted_data.get('_runtime_extraction_only'):
+        return ToolResult(True, data={'document_id': doc.pk, 'status': 'extracted',
+            'file_name': doc.file_name, 'extracted_data': doc.extracted_data},
+            message='Document lu. Aucune modification du planning. Utilise import_document seulement si demandée.')
+
     from services.agent_v2.importation import resume_import, message_import
     summary = resume_import(doc)
     pending = summary.get('precisions') or []

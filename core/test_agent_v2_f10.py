@@ -428,7 +428,7 @@ class P4RegleTests(SimpleTestCase):
 
     def test_le_prompt_demande_toutes_les_valeurs_d_un_coup(self):
         from services.agent_v2.prompts import REGLES_AGIR
-        for requis in ("Quand tu demandes, demande TOUTES les valeurs qui manquent dans le meme formulaire",
-                       "une valeur que tu n'as pas demandee ne se devine pas au tour suivant"):
+        for requis in ("Demande ensemble les informations indispensables encore inconnues",
+                       "en reutilisant toutes celles deja fournies"):
             with self.subTest(requis=requis):
-                self.assertIn(requis, REGLES_AGIR)
+                self.assertIn(requis, ' '.join(REGLES_AGIR.split()))

@@ -424,6 +424,10 @@ def composer(brut: ReponseDire | None, registre: Registre, faits: str,
     """
     faits = faits or ""
     rejetees = _references_rejetees(brut, registre) if brut is not None else 0
+    from services.agent_v2.validation_recus import est_attestee
+    if (brut is not None and not rejetees and not question_code
+            and not brut.suite and est_attestee(registre, brut.ouverture)):
+        return Composition(prose=sans_tiret_long(brut.ouverture))
 
     ouverture = suite = question = ""
     options: list = []

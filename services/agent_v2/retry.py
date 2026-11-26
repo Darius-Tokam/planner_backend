@@ -12,6 +12,7 @@ sont retentees. Les 4xx (hors 429) et les erreurs de validation ne le
 sont jamais.
 """
 
+import asyncio
 import logging
 import re
 
@@ -67,6 +68,17 @@ def est_reessayable(erreur: Exception) -> bool:
     from services.agent_v2.budget_tour import BudgetIndisponible
     if isinstance(erreur, BudgetIndisponible):
         return False
+    # Les erreurs agrégées de la chaîne ne sont reprises que si toutes les
+    # causes le permettent. Une erreur de code ne devient jamais du transport.
+    causes = getattr(erreur, 'exceptions', None)
+    if causes:
+        return all(est_reessayable(cause) for cause in causes)
+    if isinstance(erreur, (TypeError, ValueError, AttributeError, AssertionError)):
+        return False
+    from httpx import TransportError
+    from openai import APIConnectionError
+    if est_timeout(erreur) or isinstance(erreur, (ConnectionError, TransportError, APIConnectionError)):
+        return True
     texte = str(erreur).lower()
     statut = getattr(erreur, "status_code", None) or getattr(erreur, "status", None)
     try:
@@ -95,9 +107,7 @@ def est_reessayable(erreur: Exception) -> bool:
     )
     if any(m in texte for m in marqueurs_definitifs):
         return False
-    # Par defaut : les erreurs reseau/transport inconnues sont reessayables,
-    # les erreurs metier ne devraient pas arriver ici (typées en amont).
-    return True
+    return False
 
 
 def delai_avant_reessai(tentative: int, erreur: Exception) -> float:
@@ -110,5 +120,13 @@ def delai_avant_reessai(tentative: int, erreur: Exception) -> float:
 
 
 def est_timeout(erreur: Exception) -> bool:
+    if isinstance(erreur, (TimeoutError, asyncio.TimeoutError)):
+        return True
+    causes = getattr(erreur, 'exceptions', None)
+    if causes:
+        return any(est_timeout(cause) for cause in causes)
+    if erreur.__cause__ is not None and erreur.__cause__ is not erreur:
+        if est_timeout(erreur.__cause__):
+            return True
     texte = str(erreur).lower()
     return "timeout" in texte or "timed out" in texte

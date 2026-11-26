@@ -210,7 +210,7 @@ def _ms(depart: float) -> int:
 
 def preparer(user, message_brut: str) -> Preparation:
     """Le contexte de LIRE, lu en base dans le thread de la requete."""
-    from core.models import ConversationMessage, RecurringBlock, Task
+    from core.models import RecurringBlock, Task
 
     message = message_brut if isinstance(message_brut, str) else ""
     maintenant = timezone.localtime()
@@ -240,7 +240,8 @@ def preparer(user, message_brut: str) -> Preparation:
 
     # Le message precedent du tour: [0] est le message courant, deja sauve.
     question, formulaire = "", []
-    deux = list(ConversationMessage.objects.filter(user=user).order_by("-pk")[:2])
+    from services.agent_v2.contexte_tour import messages_du_chat
+    deux = list(messages_du_chat(user).order_by("-pk")[:2])
     if len(deux) == 2 and deux[1].role == "assistant" and isinstance(deux[1].metadata, dict):
         meta = deux[1].metadata
         question = str(meta.get("question") or "")

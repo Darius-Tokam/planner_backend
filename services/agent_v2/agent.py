@@ -530,7 +530,8 @@ class PlannerAgentV2:
         # tool_choice=required est incompatible avec le mode thinking sur tous
         # les providers). La reflexion reste ACTIVE. Le modele agit librement
         # avec ses outils ; sa reponse aux lectures et aux echecs passe par
-        # verifier_prose. Le code rend les recus des mutations confirmees.
+        # verifier_prose. Les mutations relues autorisent la prose validée
+        # contre leurs reçus; sinon le code conserve le rendu factuel.
         from services.agent_v2.budget_tour import modele_borne, BudgetEpuise
         agent = Agent(
             modele_borne(modele_agir(), 'planning'),
@@ -556,23 +557,31 @@ class PlannerAgentV2:
             faits_controle = (bloc_factuel(registre)
                              if self._lecture_sans_demande(registre) else "")
             question_exige_outil = False
+            from services.agent_v2 import validation_recus
+            mutation = any(a.est_mutation and a.succes for a in registre.actions)
+            etat_recus = (validation_recus.etat_a_verifier(sortie, registre)
+                          if mutation and len(message) <= 6000 else None)
+            questions_controle = {}
+            etat_controle = etat_recus or {'reponse_assistant': sortie[:1200]}
+            etat_controle['message'] = message[:6000]
+            if etat_recus is not None:
+                questions_controle['reponse_etayee'] = validation_recus.question()
             if question_sans_outil(sortie, registre):
-                extrait_message = (message if len(message) <= 1200 else
-                                   f"{message[:600]}\n[...]\n{message[-600:]}")
-                extrait_sortie = (sortie if len(sortie) <= 1200 else
-                                  f"{sortie[:600]}\n[...]\n{sortie[-600:]}")
+                questions_controle['question_requiert_outil'] = _jugement.q_question_requiert_outil()
+            verdicts = {}
+            if questions_controle:
                 verdicts = await asyncio.to_thread(
-                    _jugement.juger,
-                    {"message": extrait_message,
-                     "reponse_assistant": extrait_sortie},
-                    {"question_requiert_outil": _jugement.q_question_requiert_outil()},
-                )
+                    _jugement.juger, etat_controle, questions_controle)
                 verdict = (verdicts or {}).get("question_requiert_outil") or {}
                 question_exige_outil = jugement_exige_outil(verdict)
-            retour = retour_validation(sortie, registre,
-                                       faits_controle=faits_controle,
-                                       question_exige_outil=question_exige_outil)
-            if retour and (question_exige_outil
+            retour = validation_recus.enregistrer(registre, sortie,
+                (verdicts or {}).get('reponse_etayee') or {}) if mutation else None
+            if question_exige_outil or not mutation:
+                retour = retour or retour_validation(sortie, registre,
+                    faits_controle=faits_controle, question_exige_outil=question_exige_outil)
+            # Si les preuves ou le juge sont indisponibles, le rendu conserve
+            # les reçus du code. Aucune reformulation aveugle n'y changera rien.
+            if retour and (mutation or question_exige_outil
                            or reprises_sortie < 2):
                 reprises_sortie += 1
                 logger.info("agent_v2 sortie rejetee reprise=%d actions=%d",
@@ -645,71 +654,56 @@ class PlannerAgentV2:
         - Le stream vide (« Streamed response ended without content or tool
           calls », defaut prod du 2026-09-29) est reessayable.
         """
+        from pydantic_ai import capture_run_messages
         from services.agent_v2 import retry as _retry
+        from services.agent_v2.modeles import fermer_modele
         delai = kwargs.pop('delai', None)
+        kwargs.setdefault('usage', RunUsage())
 
         async def _exec_async():
-            from services.agent_v2.modeles import fermer_modele
+            prochain_message = message
             timeouts = 0
-            derniere = None
-            for tentative in range(1, _retry.TENTATIVES_MAX + 1):
-                try:
-                    return await agent.run(message, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    derniere = exc
-                    vide = 'without content or tool calls' in str(exc)
-                    if not vide and not _retry.est_reessayable(exc):
-                        raise
-                    if _retry.est_timeout(exc):
-                        timeouts += 1
-                        if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
-                            raise
-                    if tentative >= _retry.TENTATIVES_MAX:
-                        raise
-                    attente = _retry.delai_avant_reessai(tentative, exc)
-                    logger.warning("Boucle: echec tentative %d/%d type=%s, reessai dans %.1fs",
-                                   tentative, _retry.TENTATIVES_MAX,
-                                   type(exc).__name__, attente)
-                    await asyncio.sleep(attente)
-                finally:
-                    await fermer_modele(getattr(agent, 'model', None))
-            raise derniere
-
-        def _exec_sync():
-            from services.agent_v2.modeles import fermer_modele
-            timeouts = 0
-            derniere = None
-            for tentative in range(1, _retry.TENTATIVES_MAX + 1):
-                try:
-                    return agent.run_sync(message, **kwargs)
-                except Exception as exc:  # noqa: BLE001
-                    derniere = exc
-                    vide = 'without content or tool calls' in str(exc)
-                    if not vide and not _retry.est_reessayable(exc):
-                        raise
-                    if _retry.est_timeout(exc):
-                        timeouts += 1
-                        if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
-                            raise
-                    if tentative >= _retry.TENTATIVES_MAX:
-                        raise
-                    attente = _retry.delai_avant_reessai(tentative, exc)
-                    logger.warning("Boucle: echec tentative %d/%d type=%s, reessai dans %.1fs",
-                                   tentative, _retry.TENTATIVES_MAX,
-                                   type(exc).__name__, attente)
-                    import time as _time
-                    _time.sleep(attente)
-                finally:
+            try:
+                for tentative in range(1, _retry.TENTATIVES_MAX + 1):
                     try:
-                        import asyncio as _aio
-                        _aio.run(fermer_modele(getattr(agent, 'model', None)))
-                    except Exception:  # noqa: BLE001
-                        pass
-            raise derniere
+                        with capture_run_messages() as suivi:
+                            return await agent.run(prochain_message, **kwargs)
+                    except Exception as exc:  # noqa: BLE001
+                        from pydantic_ai.messages import ModelRequest
+                        if suivi and not isinstance(suivi[-1], ModelRequest):
+                            # Une panne dans un outil peut avoir eu un effet sans
+                            # reçu. Ne jamais le rejouer automatiquement.
+                            raise
+                        vide = 'without content or tool calls' in str(exc)
+                        if not vide and not _retry.est_reessayable(exc):
+                            raise
+                        if _retry.est_timeout(exc):
+                            timeouts += 1
+                            if timeouts >= _retry.TENTATIVES_MAX_TIMEOUT:
+                                raise
+                        if tentative >= _retry.TENTATIVES_MAX:
+                            raise
+                        if suivi:
+                            # Reprendre la requête interrompue avec les reçus
+                            # déjà acquis. Renvoyer le prompt initial rejouait
+                            # les outils et faisait perdre leurs résultats.
+                            kwargs['message_history'] = list(suivi)
+                            prochain_message = None
+                        attente = _retry.delai_avant_reessai(tentative, exc)
+                        logger.warning('Boucle: echec tentative %d/%d type=%s, reprise avec %d messages dans %.1fs',
+                                       tentative, _retry.TENTATIVES_MAX,
+                                       type(exc).__name__, len(suivi), attente)
+                        await asyncio.sleep(attente)
+            finally:
+                # Un client fermé entre deux essais ne peut pas être réutilisé.
+                await fermer_modele(getattr(agent, 'model', None))
 
-        if delai is not None:
-            return asyncio.run(asyncio.wait_for(_exec_async(), timeout=max(0.0, delai)))
-        return _exec_sync()
+        async def executer():
+            if delai is None:
+                return await _exec_async()
+            return await asyncio.wait_for(_exec_async(), timeout=max(0.0, delai))
+
+        return asyncio.run(executer())
 
     def process_message_stream(
         self, user, message, attachment=None, *, use_streaming=True,
@@ -734,7 +728,11 @@ class PlannerAgentV2:
             raise BudgetIndisponible('réservation étrangère au tour')
         self._trace = trace
         jeton = trace_courante.set(trace)
+        from services.agent_v2.contexte_tour import portee_courante, PorteeConversation
+        jeton_conversation = None
         try:
+            self._conversation = self._resoudre_conversation(user, conversation_id)
+            jeton_conversation = portee_courante.set(PorteeConversation(user.pk, self._conversation.pk))
             yield from self._process_message_stream(user, message, attachment,
                 use_streaming=use_streaming, generate_quick_replies=generate_quick_replies, tap=tap,
                 conversation_id=conversation_id, question_answer=question_answer)
@@ -743,6 +741,8 @@ class PlannerAgentV2:
                 if proprietaire:
                     fermer_trace(trace)
             finally:
+                if jeton_conversation is not None:
+                    portee_courante.reset(jeton_conversation)
                 trace_courante.reset(jeton)
 
     def _resoudre_conversation(self, user, conversation_id=None):
@@ -818,6 +818,9 @@ class PlannerAgentV2:
         documents = getattr(self, '_chat_attachments', None) or ([attachment] if attachment else [])
         courant.attachments.set(documents)
         self._exclu = courant.pk
+        from services.agent_v2 import contexte_tour
+        contexte_tour.fixer_message(courant.pk)
+        self._demande_source_id = courant.pk
         # Titre auto : le premier message donne son nom à la conversation
         # (style OpenCode : génération de titre, ici déterministe).
         if (self._conversation and self._conversation.titre in ("Nouvelle conversation", "Conversation")
@@ -845,14 +848,17 @@ class PlannerAgentV2:
             from services.agent_v2.reponse_question import (consommer_reponse,
                                                             ReponseQuestionRefusee)
             try:
-                precise = consommer_reponse(user, self._conversation, courant, question_answer)
+                consommer_reponse(user, self._conversation, courant, question_answer)
             except ReponseQuestionRefusee as exc:
                 texte_refus = str(exc)
                 question_reposee = getattr(exc, "question", None)
+                source = (contexte_tour.demande_reprise(user, self._conversation, courant)
+                          if question_reposee else None)
                 assistant = ConversationMessage.objects.create(
                     user=user, role="assistant", content=texte_refus,
                     conversation=self._conversation,
                     metadata={"agent": "v2", "en_reponse_a": courant.pk,
+                              "demande_source_id": source['id'] if source else courant.pk,
                               "question_posee": bool(question_reposee), "quick_replies": [],
                               "question_custom": question_reposee,
                               "interactive_inputs": question_reposee.get("fields", []) if question_reposee else []})
@@ -868,7 +874,12 @@ class PlannerAgentV2:
                 yield resultat_refus
                 return
             message_enrichi += "\n\nRÉPONSE VALIDÉE AU FORMULAIRE : " + json.dumps(
-                precise, ensure_ascii=False)
+                courant.metadata['reponse_validee'], ensure_ascii=False)
+        sources = contexte_tour.contexte_verification(
+            user, self._conversation, message, courant.pk)
+        if question_answer is not None:
+            sources['reponse_validee'] = courant.metadata['reponse_validee']
+        contexte_tour.fixer_sources(sources)
         # Lu AVANT l'attente: seul un document qui bascule pendant ce tour
         # compte comme « traite ce tour » (equivalence avec v1 detaillee dans
         # la docstring de boutons_forces).
@@ -971,6 +982,19 @@ class PlannerAgentV2:
         if resumes:
             message_enrichi = (f"{message_enrichi}\n\nSUITE AU CHOIX DE L'UTILISATEUR:\n- "
                                + "\n- ".join(resumes))
+
+        # Une réponse validée continue la demande source, pas seulement le
+        # dernier « oui ». Le dernier message garde priorité sur ses valeurs.
+        reprise_validee = question_answer is not None or any(c.get('option') for c in choix)
+        if reprise_validee or reemises:
+            source = contexte_tour.demande_reprise(user, self._conversation, courant)
+            if source:
+                self._demande_source_id = source['id']
+                if reprise_validee:
+                    message_enrichi = contexte_tour.enrichir_reprise(message_enrichi, source)
+                sources = {**sources, 'demande_reprise': contexte_tour.borner(source, 4000)}
+                contexte_tour.fixer_sources(sources)
+        message_enrichi += contexte_tour.resultats_du_code(registre)
 
         # CHEMIN RAPIDE (D6). Banc du round 5, s05-2: le code avait repose la
         # demande a 0,06 s, puis AGIR a raisonne 105,6 s sans outil et son
@@ -1135,10 +1159,12 @@ class PlannerAgentV2:
         # rien produit d'utilisable. Les mutations réussies gardent leurs
         # reçus relus et les questions du code gardent leur priorité.
         mutation_reussie = any(a.succes and a.est_mutation for a in registre.actions)
+        from services.agent_v2.validation_recus import est_attestee
+        prose_attestee = bool(reponse_boucle and est_attestee(registre, reponse_boucle.ouverture))
         modele_prioritaire = bool(
             reponse_boucle is not None and not par_le_code and not budget_jour_epuise
             and not registre.budget_epuise and not lecture_masquee and not reemises
-            and not mutation_reussie and not gagnant and not faits
+            and (prose_attestee or (not mutation_reussie and not faits)) and not gagnant
             and not prose_regle)
         lecture_repondue_par_modele = False
         if modele_prioritaire:
@@ -1333,6 +1359,8 @@ class PlannerAgentV2:
             "usage": list(getattr(getattr(self, '_trace', None), 'usages', []))
                      or [{**cout, 'phase': 'planning'}],
             "en_reponse_a": self._exclu,
+            "demande_source_id": self._demande_source_id,
+            "validation_reponse": getattr(registre, 'validation_reponse', None),
             "quick_replies": quick_replies,
             "interactive_inputs": formulaire or [],
             "question_posee": question_posee,
@@ -1563,6 +1591,11 @@ class PlannerAgentV2:
     @staticmethod
     def _tour_decide(registre: Registre, message: str) -> bool:
         """Le code a-t-il tout decide ce tour (D6) ? Faux au moindre doute."""
+        if any(((a.donnees or {}).get('par_le_code') and a.est_mutation)
+               or (a.donnees or {}).get('decision_code') == 'annulee'
+               for a in registre.actions):
+            # Un succès ou un refus ne clôt que cette action, pas les autres.
+            return False
         try:
             decide = _charger_tour_decide()
             return bool(decide(registre, message)) if callable(decide) else False
@@ -1570,16 +1603,20 @@ class PlannerAgentV2:
             logger.error("Decision du code illisible", exc_info=True)
             return False
 
-    @staticmethod
-    def _dernier_mot_de_l_agent(user: User) -> str:
+    def _dernier_mot_de_l_agent(self, user: User) -> str:
         """Ce que l'assistant vient de dire, pour juger ce qui lui repond.
 
         Un message n'a pas le meme sens seul ou apres une question. Borne a
         400 caracteres: le juge a besoin du sens, pas de la liste affichee.
         """
         from core.models import ConversationMessage
+        filtre = {'user': user, 'role': 'assistant'}
+        if getattr(self, '_conversation', None) is not None:
+            filtre['conversation'] = self._conversation
+        if getattr(self, '_exclu', None) is not None:
+            filtre['pk__lt'] = self._exclu
         dernier = (ConversationMessage.objects
-                   .filter(user=user, role="assistant")
+                   .filter(**filtre)
                    .order_by("-pk")
                    .values_list("content", flat=True)
                    .first())
@@ -1851,8 +1888,8 @@ class PlannerAgentV2:
     def _deux_derniers_echanges(self, user: User) -> str:
         """Les quatre derniers messages avant celui-ci, courts, pour DIRE."""
         try:
-            lignes = list(ConversationMessage.objects
-                          .filter(user=user).exclude(pk=self._exclu)
+            from services.agent_v2.contexte_tour import messages_du_chat
+            lignes = list(messages_du_chat(user).exclude(pk=self._exclu)
                           .order_by("-created_at", "-pk")[:4])
         except Exception:  # noqa: BLE001 - un contexte absent ne casse pas un tour
             logger.debug("Historique court illisible", exc_info=True)
@@ -1994,6 +2031,8 @@ class PlannerAgentV2:
         filtre = {'user': user}
         if conversation is not None:
             filtre['conversation'] = conversation
+        if getattr(self, '_exclu', None) is not None:
+            filtre['pk__lt'] = self._exclu
         lignes = (ConversationMessage.objects
                   .filter(**filtre).exclude(pk=getattr(self, "_exclu", None))
                   .order_by("-created_at")[:HISTORIQUE_MAX])
@@ -2003,6 +2042,13 @@ class PlannerAgentV2:
             if restant <= 0:
                 break
             texte = ligne.content
+            # Une date relative appartient au jour où ce message a été écrit.
+            # La prose d'un assistant n'est pas une source de contrainte externe.
+            date_source = timezone.localtime(ligne.created_at).isoformat()
+            texte = f"[Message {ligne.pk}, écrit le {date_source}]\n{texte}"
+            reponse_validee = (ligne.metadata or {}).get('reponse_validee')
+            if ligne.role == 'user' and isinstance(reponse_validee, dict):
+                texte += '\n[Réponse validée : ' + json.dumps(reponse_validee, ensure_ascii=False) + ']'
             # Les boutons ne sont plus colles au texte: sans cette ligne, le
             # modele ne saurait pas que « 15 h 50 à 17 h 20 » repond a un choix
             # qu'il a lui-meme propose au tour precedent.

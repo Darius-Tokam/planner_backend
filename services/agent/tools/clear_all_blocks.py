@@ -45,9 +45,10 @@ def execute(user: User, **kwargs) -> ToolResult:
     # Soft-delete (active=False) au lieu d'un DELETE: réversible, restaurable.
     # Opération multi-lignes → atomique.
     with transaction.atomic():
-        count = RecurringBlock.objects.filter(
-            user=user, active=True
-        ).update(active=False)
+        targets = RecurringBlock.objects.filter(user=user, active=True)
+        if '_target_ids' in kwargs:
+            targets = targets.filter(pk__in=kwargs['_target_ids'].get('RecurringBlock', []))
+        count = targets.update(active=False)
         # update() n'emet aucun signal: le reveil du telephone se demande
         # a la main, sinon les alarmes des blocs archives sonneraient encore.
         from services.apns import reveiller_utilisateur

@@ -67,12 +67,12 @@ async def fermer_modele(modele):
         logging.getLogger(__name__).warning('fermeture client modèle type=%s', type(exc).__name__)
 
 
-def _deepseek():
+def _deepseek(model_name=None):
     cle = getattr(settings, "DEEPSEEK_API_KEY", "")
     if not cle:
         return None
     return OpenAIChatModel(
-        getattr(settings, "DEEPSEEK_MODEL", "deepseek-v4-pro"),
+        model_name or getattr(settings, "DEEPSEEK_MODEL", "deepseek-v4-pro"),
         provider=DeepSeekProvider(
             openai_client=AsyncOpenAI(
                 api_key=cle,
